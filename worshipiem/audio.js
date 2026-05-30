@@ -71,7 +71,7 @@
       const div = this._div();
       const tickMs = (60000 / this.transport.bpm) / div;
       const elapsed = now() - this.transport.anchor;
-      this.scheduledUntilTick = Math.floor(elapsed / tickMs);
+      this.scheduledUntilTick = Math.max(-1, Math.floor(elapsed / tickMs));
     }
 
     _startLoop() {

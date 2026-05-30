@@ -81,6 +81,8 @@ function Listener({ room, go }) {
   const [talking, setTalking] = lS(false);
   const [pwInput, setPwInput] = lS('');
   const [pwErr, setPwErr] = lS('');
+  const [addressed, setAddressed] = lS(false);
+  const [inCountIn, setInCountIn] = lS(false);
 
   const tx = lR(null);
   const myId = lR('L' + Math.random().toString(36).slice(2, 8));
@@ -136,7 +138,15 @@ function Listener({ room, go }) {
     const t = new window.WITransport(room, 'listener');
     tx.current = t;
     t.on('state', (s) => { setSt(s); lastState.current = Date.now(); setConnected(true); });
-    t.on('level', (p) => { setHostLevel(p && p.level ? p.level : 0); lvlDecay.current = Date.now(); });
+    t.on('level', (p) => {
+      const targeted = p && Array.isArray(p.targets) && p.targets.length > 0;
+      if (targeted && !p.targets.includes(myId.current)) {
+        setHostLevel(0); setAddressed(false); return;
+      }
+      setAddressed(targeted);
+      setHostLevel(p && p.level ? p.level : 0);
+      lvlDecay.current = Date.now();
+    });
     t.on(‘granted’, () => { setAuthed(true); setDenied(false); setPwErr(‘’); });
     t.on(‘denied’, () => { setDenied(true); setAuthed(false); setPwErr(pw.current ? "That password didn’t match. Try again." : ‘’); });
 
@@ -175,7 +185,7 @@ function Listener({ room, go }) {
     const pingId = setInterval(ping, 3000);
     const stale = setInterval(() => {
       if (Date.now() - lastState.current > 7000) setConnected(false);
-      if (Date.now() - lvlDecay.current > 400) setHostLevel(0);
+      if (Date.now() - lvlDecay.current > 400) { setHostLevel(0); setAddressed(false); }
     }, 1000);
     window.addEventListener('beforeunload', () => t.send('bye', { id: myId.current }));
     return () => {
@@ -193,6 +203,17 @@ function Listener({ room, go }) {
     window.WIClick.setAccent(st.accent !== false);
     window.WIClick.setTransport({ playing: !!st.playing, anchor: st.anchor || 0, bpm: st.bpm || 120, beatsPerBar: st.bpb || 4 });
   }, [audioOn, st && st.playing, st && st.anchor, st && st.bpm, st && st.bpb, st && st.timbre, st && st.subdivision, st && st.accent]);
+
+  lE(() => {
+    if (!(st && st.playing && st.countInBars > 0 && Date.now() < (st.anchor || 0))) {
+      setInCountIn(false); return;
+    }
+    setInCountIn(true);
+    const id = setInterval(() => {
+      if (Date.now() >= (st.anchor || 0)) { setInCountIn(false); clearInterval(id); }
+    }, 50);
+    return () => clearInterval(id);
+  }, [st && st.anchor, st && st.playing, st && st.countInBars]);
 
   lE(() => {
     const master = st ? (st.clickVol ?? 80) : 80;
@@ -285,8 +306,25 @@ function Listener({ room, go }) {
           )}
         </div>
 
-        <Metronome playing={!!(st && st.playing)} anchor={(st && st.anchor) || 0} bpm={(st && st.bpm) || 120} beatsPerBar={bpb} size={300} />
+        <div style={{ position: 'relative' }}>
+          <Metronome playing={!!(st && st.playing)} anchor={(st && st.anchor) || 0} bpm={(st && st.bpm) || 120} beatsPerBar={bpb} size={300} />
+          {inCountIn && (
+            <CountInOverlay active={true} anchor={(st && st.anchor) || 0} bpm={(st && st.bpm) || 120}
+              beatsPerBar={bpb} bars={(st && st.countInBars) || 1} onDone={() => setInCountIn(false)} />
+          )}
+        </div>
         <div className="mono muted" style={{ fontSize: 15 }}>{TS_LABEL[bpb] || '4/4'} · {(st && st.bpm) || '—'} bpm{st && st.subdivision && st.subdivision !== 'none' ? ' · ' + SUBDIV_LABEL[st.subdivision] : ''}</div>
+        {addressed && (
+          <div style={{
+            background: 'var(--accent-soft)', border: '1px solid var(--accent)',
+            borderRadius: 'var(--r-md)', padding: '8px 14px', width: '100%',
+            display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, fontWeight: 600,
+          }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', flex: 'none', animation: 'fadein 0s' }} />
+            Leader is talking to you
+            <span className="dim" style={{ fontWeight: 400, marginLeft: 'auto', fontSize: 13 }}>Just for you</span>
+          </div>
+        )}
 
         {/* ready + vibrate */}
         <div style={{ display: 'flex', gap: 10, width: '100%' }}>

@@ -24,7 +24,7 @@ function HostControl({ room, go }) {
   const [bpb, setBpb] = uS(session.setlist[0]?.bpb || 4);
   const [clickVol, setClickVol] = uS(80);
   const [micVol, setMicVol] = uS(75);
-  const [countIn, setCountIn] = uS(false);
+  const [countInBars, setCountInBars] = uS(0);  // 0=off, 1=1-bar, 2=2-bar
   const [counting, setCounting] = uS(false);
   const [timbre, setTimbre] = uS('wood');
   const [subdivision, setSubdivision] = uS('none');
@@ -43,6 +43,7 @@ function HostControl({ room, go }) {
   const [tab, setTab] = uS('setlist');         // setlist | players
   const [advanced, setAdvanced] = uS(false);
   const [activeCueId, setActiveCueId] = uS(null);
+  const [talkTargets, setTalkTargets] = uS([]);
 
   const tx = uR(null);
   const tapTimes = uR([]);
@@ -55,7 +56,8 @@ function HostControl({ room, go }) {
   // ref for players so toggleMic closure can read current value
   const playersRef = uR({});
   const broadcastRef = uR(null);
-  uE(() => { aRef.current = anchor; bRef.current = bpm; pRef.current = playing; bpbRef.current = bpb; pttRef.current = pttMode; holdRef.current = holding; micVolRef.current = micVol; });
+  const targetsRef = uR([]);
+  uE(() => { aRef.current = anchor; bRef.current = bpm; pRef.current = playing; bpbRef.current = bpb; pttRef.current = pttMode; holdRef.current = holding; micVolRef.current = micVol; targetsRef.current = talkTargets; });
   uE(() => { playersRef.current = players; }, [players]);
 
   const activeSong = setlist.find(s => s.id === activeId);
@@ -102,12 +104,14 @@ function HostControl({ room, go }) {
   }, [room]);
 
   const wiNow = () => window.WIClock ? window.WIClock.now() : Date.now();
+  const leadMs = (tempo, beats) => countInBars > 0 ? countInBars * beats * (60000 / tempo) : 0;
   const stateObj = () => {
     const s = setlist.find(x => x.id === activeId);
     const cue = s && s.cues && s.cues.find(c => c.id === activeCueId);
     return {
       sessionName: session.name, needsPassword: !!session.password, setlist, activeId, playing, anchor, bpm, bpb,
-      clickVol, micVol, micOn, timbre, subdivision, accent, pttMode, activeCue: cue ? cue.name : null, ts: Date.now(),
+      clickVol, micVol, micOn, timbre, subdivision, accent, pttMode, countInBars,
+      activeCue: cue ? cue.name : null, ts: Date.now(),
     };
   };
   const broadcast = () => { if (tx.current) tx.current.send('state', stateObj()); };
@@ -119,7 +123,7 @@ function HostControl({ room, go }) {
   uE(() => { window.WIClick.setSubdivision(subdivision); }, [subdivision]);
   uE(() => { window.WIClick.setAccent(accent); }, [accent]);
   uE(() => { broadcast(); window.WISnap.save(room, stateObj()); },
-    [activeId, playing, anchor, bpm, bpb, clickVol, micVol, micOn, timbre, subdivision, accent, pttMode, setlist, activeCueId]);
+    [activeId, playing, anchor, bpm, bpb, clickVol, micVol, micOn, timbre, subdivision, accent, pttMode, setlist, activeCueId, countInBars]);
 
   /* ---- PTT state effect — enable/disable mic tracks ---- */
   uE(() => {
@@ -150,7 +154,6 @@ function HostControl({ room, go }) {
       const s0 = Math.min(rampStart, target);
       setBpm(s0); bRef.current = s0;
       const a = wiNow(); setAnchor(a); aRef.current = a; setPlaying(true);
-      if (countIn) setCounting(true);
       const t0 = wiNow(), dur = 12000;
       rampTimer.current = setInterval(() => {
         const k = Math.min(1, (wiNow() - t0) / dur);
@@ -160,8 +163,10 @@ function HostControl({ room, go }) {
         if (k >= 1) { clearInterval(rampTimer.current); }
       }, 180);
     } else {
-      setBpm(target); const a = wiNow(); setAnchor(a); setPlaying(true);
-      if (countIn) setCounting(true);
+      setBpm(target);
+      const a = wiNow() + leadMs(target, bpb);
+      setAnchor(a); aRef.current = a; setPlaying(true);
+      if (countInBars > 0) setCounting(true);
     }
   };
   const stop = () => { clearInterval(rampTimer.current); setPlaying(false); setCounting(false); setActiveCueId(null); };
@@ -171,7 +176,7 @@ function HostControl({ room, go }) {
     const s = setlist.find(x => x.id === id); if (!s) return;
     clearInterval(rampTimer.current);
     setActiveId(id); setActiveCueId(null); setBpm(s.bpm); setBpb(s.bpb);
-    if (pRef.current) { const a = wiNow(); setAnchor(a); if (countIn) setCounting(true); }
+    if (pRef.current) { const a = wiNow() + leadMs(s.bpm, s.bpb); setAnchor(a); aRef.current = a; if (countInBars > 0) setCounting(true); }
   };
   const nextSong = () => {
     const i = setlist.findIndex(s => s.id === activeId);
@@ -195,8 +200,9 @@ function HostControl({ room, go }) {
     clearInterval(rampTimer.current);
     setActiveCueId(cue.id);
     setBpb(cue.bpb || bpb); setBpm(cue.bpm || bpm);
-    setAnchor(wiNow()); setPlaying(true);
-    if (countIn) setCounting(true);
+    const cueAnchor = wiNow() + leadMs(cue.bpm || bpm, cue.bpb || bpb);
+    setAnchor(cueAnchor); aRef.current = cueAnchor; setPlaying(true);
+    if (countInBars > 0) setCounting(true);
   };
 
   const tap = async () => {
@@ -225,12 +231,19 @@ function HostControl({ room, go }) {
         if (now - lvlThrottle.current > 80 && tx.current) {
           lvlThrottle.current = now;
           const gated = (pttRef.current === 'ptt' && !holdRef.current) ? 0 : lv;
-          tx.current.send('level', { level: gated * (micVolRef.current / 100) });
+          tx.current.send('level', { level: gated * (micVolRef.current / 100), targets: targetsRef.current });
         }
       };
     } catch (e) { setMicErr('Microphone permission was blocked. Allow access to talk to the band.'); }
   };
   uE(() => () => { window.WIMic.disconnect(); clearInterval(rampTimer.current); }, []);
+
+  uE(() => {
+    setTalkTargets(t => {
+      const f = t.filter(id => players[id]);
+      return f.length === t.length ? t : f;
+    });
+  }, [players]);
 
   const pcount = Object.keys(players).length;
   const readyCount = Object.values(players).filter(p => p.ready).length;
@@ -289,7 +302,7 @@ function HostControl({ room, go }) {
               <>
                 <div style={{ position: 'relative' }}>
                   <Metronome playing={playing} anchor={anchor} bpm={bpm} beatsPerBar={bpb} size={252} />
-                  <CountInOverlay active={counting && playing} anchor={anchor} bpm={bpm} beatsPerBar={bpb} onDone={() => setCounting(false)} />
+                  <CountInOverlay active={counting && playing} anchor={anchor} bpm={bpm} beatsPerBar={bpb} bars={countInBars || 1} onDone={() => setCounting(false)} />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <button className="btn btn--icon" onClick={() => setTempo(bpm - 1)}><WIcon name="minus" size={20} /></button>
@@ -308,7 +321,9 @@ function HostControl({ room, go }) {
             </button>
             <div style={{ display: 'flex', gap: 10, width: '100%' }}>
               <button className="btn" style={{ flex: 1 }} onClick={tap}><WIcon name="hand" size={20} /> Tap tempo</button>
-              <button className="btn" style={{ flex: 1, ...(countIn ? activeBtn : {}) }} onClick={() => setCountIn(v => !v)}><WIcon name="metronome" size={18} /> Count-in</button>
+              <button className="btn" style={{ flex: 1, ...(countInBars > 0 ? activeBtn : {}) }} onClick={() => setCountInBars(v => (v + 1) % 3)}>
+                <WIcon name="metronome" size={18} /> {countInBars === 0 ? 'Count-in' : countInBars === 1 ? '1-bar count-in' : '2-bar count-in'}
+              </button>
             </div>
           </div>
 
@@ -410,6 +425,19 @@ function HostControl({ room, go }) {
             ) : (
               <>
                 <Segmented label="Mic mode" value={pttMode} onChange={setPttMode} options={[['open', 'Open mic'], ['ptt', 'Push-to-talk']]} />
+                {pcount > 0 && (
+                  <div>
+                    <div className="overline" style={{ marginBottom: 8 }}>Talk to</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      <TalkChip name="Whole band" icon="users" active={talkTargets.length === 0} onClick={() => setTalkTargets([])} />
+                      {Object.entries(players).map(([id, p]) => (
+                        <TalkChip key={id} name={p.name} icon={instIcon(p.instrument)}
+                          active={talkTargets.includes(id)}
+                          onClick={() => setTalkTargets(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id])} />
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {pttMode === 'ptt' && (
                   <button
                     onPointerDown={() => setHolding(true)} onPointerUp={() => setHolding(false)} onPointerLeave={() => setHolding(false)}
@@ -451,6 +479,21 @@ function HostControl({ room, go }) {
 }
 
 const activeBtn = { background: 'var(--surface-3)', borderColor: 'var(--border-2)', color: 'var(--fg-1)' };
+
+function TalkChip({ name, icon, active, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 11px',
+      borderRadius: 'var(--r-pill)', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+      background: active ? 'var(--accent-soft)' : 'var(--surface-2)',
+      border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border)'),
+      color: active ? 'var(--fg-1)' : 'var(--fg-2)',
+      transition: 'all 140ms var(--ease)',
+    }}>
+      <WIcon name={icon} size={13} />{name}
+    </button>
+  );
+}
 
 function Segmented({ label, value, onChange, options }) {
   return (
