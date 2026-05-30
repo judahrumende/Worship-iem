@@ -54,6 +54,7 @@ function HostControl({ room, go }) {
   const pttRef = uR(pttMode), holdRef = uR(holding), micVolRef = uR(micVol);
   // ref for players so toggleMic closure can read current value
   const playersRef = uR({});
+  const broadcastRef = uR(null);
   uE(() => { aRef.current = anchor; bRef.current = bpm; pRef.current = playing; bpbRef.current = bpb; pttRef.current = pttMode; holdRef.current = holding; micVolRef.current = micVol; });
   uE(() => { playersRef.current = players; }, [players]);
 
@@ -71,17 +72,17 @@ function HostControl({ room, go }) {
   uE(() => {
     const t = new window.WITransport(room, 'host');
     tx.current = t;
+    window.WIMic.setTransport(t);
     const see = (p) => {
       if (!p || !p.id) return;
       setPlayers(prev => ({ ...prev, [p.id]: { name: p.name || 'Musician', instrument: p.instrument || 'Other', ready: !!p.ready, t: Date.now() } }));
     };
     t.on('hello', (p) => {
       if (session.password) {
-        if (!p || p.password !== session.password) { t.send('denied', { id: p && p.id }); return; }
-        t.send('granted', { id: p.id });
+        if (!p || p.password !== session.password) { t.send('denied', { to: p && p.id, id: p && p.id }); return; }
+        t.send('granted', { to: p.id, id: p.id });
       }
-      see(p); broadcast();
-      // Wire up WebRTC for this new listener if mic is active
+      see(p); broadcastRef.current && broadcastRef.current();
       if (window.WIMic.active) window.WIMic.addListener(p.id);
     });
     t.on('ping', see);
@@ -100,6 +101,7 @@ function HostControl({ room, go }) {
     return () => { clearInterval(prune); t.close(); };
   }, [room]);
 
+  const wiNow = () => window.WIClock ? window.WIClock.now() : Date.now();
   const stateObj = () => {
     const s = setlist.find(x => x.id === activeId);
     const cue = s && s.cues && s.cues.find(c => c.id === activeCueId);
@@ -109,6 +111,7 @@ function HostControl({ room, go }) {
     };
   };
   const broadcast = () => { if (tx.current) tx.current.send('state', stateObj()); };
+  broadcastRef.current = broadcast;
 
   uE(() => { window.WIClick.setTransport({ playing, anchor, bpm, beatsPerBar: bpb }); }, [playing, anchor, bpm, bpb, ready]);
   uE(() => { window.WIClick.setVolume(clickVol / 100); }, [clickVol]);
@@ -127,9 +130,10 @@ function HostControl({ room, go }) {
 
   /* ---- tempo helpers (phase-preserving) ---- */
   const reanchorFor = (newBpm) => {
+    const now = wiNow();
     const oldBeatMs = 60000 / bRef.current;
-    const idx = (Date.now() - aRef.current) / oldBeatMs;
-    return Date.now() - idx * (60000 / newBpm);
+    const idx = (now - aRef.current) / oldBeatMs;
+    return now - idx * (60000 / newBpm);
   };
   const setTempo = (nb) => {
     nb = Math.min(300, Math.max(20, Math.round(nb)));
@@ -145,18 +149,18 @@ function HostControl({ room, go }) {
     if (rampOn) {
       const s0 = Math.min(rampStart, target);
       setBpm(s0); bRef.current = s0;
-      const a = Date.now(); setAnchor(a); aRef.current = a; setPlaying(true);
+      const a = wiNow(); setAnchor(a); aRef.current = a; setPlaying(true);
       if (countIn) setCounting(true);
-      const t0 = Date.now(), dur = 12000;
+      const t0 = wiNow(), dur = 12000;
       rampTimer.current = setInterval(() => {
-        const k = Math.min(1, (Date.now() - t0) / dur);
+        const k = Math.min(1, (wiNow() - t0) / dur);
         const nb = Math.round(s0 + (target - s0) * k);
         const na = reanchorFor(nb);
         setAnchor(na); aRef.current = na; setBpm(nb); bRef.current = nb;
         if (k >= 1) { clearInterval(rampTimer.current); }
       }, 180);
     } else {
-      setBpm(target); const a = Date.now(); setAnchor(a); setPlaying(true);
+      setBpm(target); const a = wiNow(); setAnchor(a); setPlaying(true);
       if (countIn) setCounting(true);
     }
   };
@@ -167,7 +171,7 @@ function HostControl({ room, go }) {
     const s = setlist.find(x => x.id === id); if (!s) return;
     clearInterval(rampTimer.current);
     setActiveId(id); setActiveCueId(null); setBpm(s.bpm); setBpb(s.bpb);
-    if (pRef.current) { const a = Date.now(); setAnchor(a); if (countIn) setCounting(true); }
+    if (pRef.current) { const a = wiNow(); setAnchor(a); if (countIn) setCounting(true); }
   };
   const nextSong = () => {
     const i = setlist.findIndex(s => s.id === activeId);
@@ -191,7 +195,7 @@ function HostControl({ room, go }) {
     clearInterval(rampTimer.current);
     setActiveCueId(cue.id);
     setBpb(cue.bpb || bpb); setBpm(cue.bpm || bpm);
-    setAnchor(Date.now()); setPlaying(true);
+    setAnchor(wiNow()); setPlaying(true);
     if (countIn) setCounting(true);
   };
 
@@ -214,8 +218,6 @@ function HostControl({ room, go }) {
     try {
       const label = await window.WIMic.connect();
       setMicLabel(label); setMicOn(true);
-      window.WIMic.setTransport(tx.current);
-      // Connect all currently connected listeners
       Object.keys(playersRef.current).forEach(pid => window.WIMic.addListener(pid));
       window.WIMic.onLevel = (lv) => {
         setMicLevel(lv);
@@ -313,7 +315,7 @@ function HostControl({ room, go }) {
           {/* click options */}
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             <span className="overline"><WIcon name="metronome" size={13} style={{ verticalAlign: -2, marginRight: 6 }} />Click options</span>
-            <Segmented label="Time signature" value={String(bpb)} onChange={(v) => { setBpb(+v); if (pRef.current) setAnchor(Date.now()); }}
+            <Segmented label="Time signature" value={String(bpb)} onChange={(v) => { setBpb(+v); if (pRef.current) setAnchor(wiNow()); }}
               options={[['4', '4/4'], ['3', '3/4'], ['6', '6/8'], ['2', '2/4']]} />
             <Segmented label="Subdivision" value={subdivision} onChange={setSubdivision}
               options={[['none', 'Quarter'], ['8', '8ths'], ['triplet', 'Triplet'], ['16', '16ths']]} />

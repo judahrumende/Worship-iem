@@ -24,6 +24,7 @@
       this.gain = 1;
       this._pcs = new Map();     // listenerId → RTCPeerConnection
       this._transport = null;
+      this._registeredTransport = null;
     }
 
     get active() { return !!this.stream; }
@@ -75,14 +76,14 @@
       this.stream = null; this.ctx = null; this.analyser = null;
       this.level = 0;
       if (this.onLevel) this.onLevel(0);
-      // Close all peer connections
       this._pcs.forEach(pc => { try { pc.close(); } catch (_) {} });
       this._pcs.clear();
-      this._transport = null;
     }
 
     setTransport(t) {
       this._transport = t;
+      if (this._registeredTransport === t) return;
+      this._registeredTransport = t;
       t.on('rtc-answer', (p) => {
         const pc = this._pcs.get(p.id);
         if (pc && p.sdp) pc.setRemoteDescription(new RTCSessionDescription(p.sdp)).catch(() => {});

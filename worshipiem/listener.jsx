@@ -98,6 +98,7 @@ function Listener({ room, go }) {
   const pcRef = lR(null);
   const remoteStreamRef = lR(null);
   const remoteGainRef = lR(null);
+  const connectRemoteStreamRef = lR(null);
 
   lE(() => { vibrateRef.current = vibrate; }, [vibrate]);
   lE(() => { readyRef.current = iAmReady; }, [iAmReady]);
@@ -119,6 +120,7 @@ function Listener({ room, go }) {
       remoteGainRef.current = gain;
     } catch (e) {}
   }, [micVol]);
+  connectRemoteStreamRef.current = connectRemoteStream;
 
   // Update remote gain when micVol changes
   lE(() => {
@@ -135,14 +137,15 @@ function Listener({ room, go }) {
     tx.current = t;
     t.on('state', (s) => { setSt(s); lastState.current = Date.now(); setConnected(true); });
     t.on('level', (p) => { setHostLevel(p && p.level ? p.level : 0); lvlDecay.current = Date.now(); });
-    t.on('granted', (p) => { if (p && p.id === myId.current) { setAuthed(true); setDenied(false); setPwErr(''); } });
-    t.on('denied', (p) => { if (p && p.id === myId.current) { setDenied(true); setAuthed(false); setPwErr(pw.current ? 'That password didn’t match. Try again.' : ''); } });
+    t.on(‘granted’, () => { setAuthed(true); setDenied(false); setPwErr(‘’); });
+    t.on(‘denied’, () => { setDenied(true); setAuthed(false); setPwErr(pw.current ? "That password didn’t match. Try again." : ‘’); });
 
     // WebRTC: receive offer from host
     t.on('rtc-offer', async (p) => {
       if (!p || !p.sdp) return;
       const iceConfig = window.WIIceConfig || { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
       if (pcRef.current) { try { pcRef.current.close(); } catch (_) {} }
+      remoteGainRef.current = null;
       const pc = new RTCPeerConnection(iceConfig);
       pcRef.current = pc;
       pc.onicecandidate = (e) => {
@@ -151,7 +154,7 @@ function Listener({ room, go }) {
       };
       pc.ontrack = (e) => {
         const stream = e.streams && e.streams[0];
-        if (stream) connectRemoteStream(stream);
+        if (stream) connectRemoteStreamRef.current(stream);
       };
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
