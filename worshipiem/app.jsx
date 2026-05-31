@@ -1,6 +1,21 @@
 /* WorshipIEM — router + tweaks (Landing lives in landing.jsx) */
 const { useState: aS, useEffect: aE } = React;
 
+class ErrorBoundary extends React.Component {
+  constructor(p) { super(p); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  render() {
+    if (this.state.err) return (
+      <div style={{ padding: 40, color: '#f5f4ed', background: '#0d0d0c', minHeight: '100dvh', fontFamily: 'sans-serif' }}>
+        <h2 style={{ color: '#e07a55' }}>Something went wrong</h2>
+        <pre style={{ fontSize: 13, color: '#b0aea5', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{String(this.state.err)}</pre>
+        <button onClick={() => location.reload()} style={{ marginTop: 20, padding: '10px 20px', background: '#e07a55', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 15 }}>Reload</button>
+      </div>
+    );
+    return this.props.children;
+  }
+}
+
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "accent": ["#e07a55", "#c96442"],
   "clickSound": "wood"
@@ -70,4 +85,6 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <ErrorBoundary><App /></ErrorBoundary>
+);

@@ -1,6 +1,11 @@
 {
   "version": 2,
-  "outputDirectory": "worshipiem",
-  "buildCommand": "",
-  "installCommand": ""
+  "builds": [
+    { "src": "worshipiem/**", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/assets/(.*)", "dest": "/worshipiem/assets/$1" },
+    { "src": "/([^/]+\\.(js|jsx|css|png|svg|ico|woff|woff2|json))", "dest": "/worshipiem/$1" },
+    { "src": "/(.*)", "dest": "/worshipiem/index.html" }
+  ]
 }
