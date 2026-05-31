@@ -117,6 +117,7 @@ function Listener({ room, go }) {
   const remoteStreamRef = lR(null);
   const remoteGainRef = lR(null);
   const connectRemoteStreamRef = lR(null);
+  const icePendingRef = lR([]);  // queue candidates that arrive before setRemoteDescription
 
   lE(() => { vibrateRef.current = vibrate; }, [vibrate]);
   lE(() => { readyRef.current = iAmReady; }, [iAmReady]);
@@ -136,7 +137,9 @@ function Listener({ room, go }) {
       src.connect(gain);
       gain.connect(ctx.destination);
       remoteGainRef.current = gain;
-    } catch (e) {}
+    } catch (e) {
+      remoteStreamRef.current = stream; // retry when audio context is ready
+    }
   }, [micVol]);
   connectRemoteStreamRef.current = connectRemoteStream;
 
@@ -173,18 +176,25 @@ function Listener({ room, go }) {
       const iceConfig = window.WIIceConfig || { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
       if (pcRef.current) { try { pcRef.current.close(); } catch (_) {} }
       remoteGainRef.current = null;
+      icePendingRef.current = []; // discard stale candidates for old connection
       const pc = new RTCPeerConnection(iceConfig);
       pcRef.current = pc;
       pc.onicecandidate = (e) => {
         if (e.candidate && tx.current)
           tx.current.send('rtc-ice', { id: myId.current, candidate: e.candidate.toJSON() });
       };
+      // e.streams[0] is undefined on iOS Safari — fall back to wrapping the track directly
       pc.ontrack = (e) => {
-        const stream = e.streams && e.streams[0];
-        if (stream) connectRemoteStreamRef.current(stream);
+        const stream = (e.streams && e.streams[0]) || new MediaStream([e.track]);
+        connectRemoteStreamRef.current(stream);
       };
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
+        // Drain any ICE candidates that arrived before setRemoteDescription completed
+        for (const c of icePendingRef.current) {
+          try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch (_) {}
+        }
+        icePendingRef.current = [];
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         tx.current && tx.current.send('rtc-answer', { id: myId.current, sdp: pc.localDescription });
@@ -193,8 +203,12 @@ function Listener({ room, go }) {
 
     // WebRTC: receive ICE candidate from host
     t.on('rtc-ice', async (p) => {
-      if (pcRef.current && p && p.candidate) {
-        try { await pcRef.current.addIceCandidate(new RTCIceCandidate(p.candidate)); } catch (_) {}
+      if (!p || !p.candidate) return;
+      const pc = pcRef.current;
+      if (pc && pc.remoteDescription) {
+        try { await pc.addIceCandidate(new RTCIceCandidate(p.candidate)); } catch (_) {}
+      } else {
+        icePendingRef.current.push(p.candidate); // queue until setRemoteDescription is done
       }
     });
 
