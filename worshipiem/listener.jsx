@@ -9,16 +9,26 @@ function JoinScreen({ go, presetRoom }) {
   const [code, setCode] = lS(presetRoom || '');
   const [name, setNm] = lS(getStore('name', ''));
   const [inst, setInst] = lS(getStore('inst', 'Drums'));
-  const valid = code.trim().length >= 4 && name.trim();
+  const [attempted, setAttempted] = lS(false);
+  const nameRef = lR(null);
+  const codeRef = lR(null);
+
+  const codeOk = code.trim().length >= 4;
+  const nameOk = !!name.trim();
+  const valid = codeOk && nameOk;
+
   const join = () => {
-    if (!valid) return;
+    setAttempted(true);
+    if (!codeOk) { codeRef.current && codeRef.current.focus(); return; }
+    if (!nameOk) { nameRef.current && nameRef.current.focus(); return; }
     setStore('name', name.trim()); setStore('inst', inst);
     go('#/listen?room=' + code.trim().toUpperCase());
   };
+
   return (
     <div className="screen">
       <TopBar right={<button className="btn btn--ghost" onClick={() => go('#/')}>Back</button>} />
-      <div className="wrap fade-in" style={{ maxWidth: 480, paddingTop: 36, paddingBottom: 60, margin: '0 auto' }}>
+      <div className="wrap" style={{ maxWidth: 480, paddingTop: 36, paddingBottom: 60, margin: '0 auto' }}>
         <div style={{ textAlign: 'center', marginBottom: 26 }}>
           <div style={{ width: 60, height: 60, borderRadius: 17, background: 'var(--surface-2)', border: '1px solid var(--border)', display: 'grid', placeItems: 'center', margin: '0 auto 16px', color: 'var(--accent)' }}>
             <WIcon name="headphones" size={28} />
@@ -27,13 +37,19 @@ function JoinScreen({ go, presetRoom }) {
           <p className="muted">Enter the room code from your worship leader.</p>
         </div>
 
-        <input className="codebox" value={code} maxLength={6} autoFocus
+        <input ref={codeRef} className={'codebox' + (attempted && !codeOk ? ' input--error' : '')}
+          value={code} maxLength={6} autoFocus
           onChange={e => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-          onKeyDown={e => e.key === 'Enter' && valid && join()} placeholder="––––" />
+          onKeyDown={e => e.key === 'Enter' && join()} placeholder="––––" />
 
         <div className="field" style={{ marginTop: 18 }}>
-          <label>Your name</label>
-          <input className="input" value={name} onChange={e => setNm(e.target.value)} placeholder="e.g. Sam" />
+          <label style={{ color: attempted && !nameOk ? 'var(--accent)' : undefined }}>
+            Your name{attempted && !nameOk ? ' — required' : ''}
+          </label>
+          <input ref={nameRef}
+            className={'input' + (attempted && !nameOk ? ' input--error' : '')}
+            value={name} onChange={e => setNm(e.target.value)}
+            placeholder="e.g. Sam" />
         </div>
 
         <div className="field" style={{ marginTop: 16 }}>
@@ -58,7 +74,7 @@ function JoinScreen({ go, presetRoom }) {
           </div>
         </div>
 
-        <button className="btn btn--primary btn--lg btn--block" style={{ marginTop: 24 }} disabled={!valid} onClick={join}>
+        <button className="btn btn--primary btn--lg btn--block" style={{ marginTop: 24 }} onClick={join}>
           Join <WIcon name="arrowRight" size={20} />
         </button>
       </div>

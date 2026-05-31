@@ -42,12 +42,6 @@ function App() {
   aE(() => { applyTweaks(t); }, [t.accent]);
   aE(() => { if (window.WIClick) window.WIClick.setTimbre(t.clickSound); }, [t.clickSound]);
 
-  // GSAP screen transition on route change
-  aE(() => {
-    if (typeof gsap === 'undefined') return;
-    gsap.killTweensOf('.screen');
-    gsap.fromTo('.screen', { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.38, ease: 'power2.out', clearProps: 'all' });
-  }, [route.path]);
 
   const go = (hash) => { if (location.hash === hash) setRoute(parseHash()); else location.hash = hash; window.scrollTo(0, 0); };
 
