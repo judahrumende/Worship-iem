@@ -86,6 +86,7 @@
 
     _schedule() {
       if (!this.transport.playing || !this.ctx) return;
+      this._sync(); // keep epoch→AudioContext mapping fresh as WIClock offset converges
       const { anchor, bpm, beatsPerBar } = this.transport;
       const div = this._div();
       const tickMs = (60000 / bpm) / div;

@@ -62,19 +62,29 @@
     }
     _emit(type, payload) { (this.handlers[type] || []).forEach(h => h(payload)); }
 
-    _syncClock() {
+    _syncClock(n = 0, best = null) {
+      if (this._closed) return;
+      const SAMPLES = 6;
       const t1 = Date.now();
       const ref = this._R.child('_clk/' + this._id);
-      ref.set({ t: firebase.database.ServerValue.TIMESTAMP }).then(() => {
-        ref.once('value', s => {
+      ref.set({ t: firebase.database.ServerValue.TIMESTAMP })
+        .then(() => ref.once('value'))
+        .then(s => {
           const serverTs = s.val()?.t;
-          if (!serverTs) return;
-          const t4 = Date.now();
-          const offset = Math.round(serverTs - (t1 + t4) / 2);
-          window.WIClock && window.WIClock.setOffset(offset);
-          ref.remove();
-        });
-      }).catch(() => {});
+          if (serverTs) {
+            const t4 = Date.now();
+            const rtt = t4 - t1;
+            const offset = Math.round(serverTs - (t1 + t4) / 2);
+            ref.remove();
+            // Keep the sample with minimum RTT — lowest round-trip = least asymmetry error
+            if (!best || rtt < best.rtt) {
+              best = { offset, rtt };
+              window.WIClock && window.WIClock.setOffset(best.offset);
+            }
+          }
+          if (n + 1 < SAMPLES) setTimeout(() => this._syncClock(n + 1, best), 200);
+        })
+        .catch(() => { if (n + 1 < SAMPLES) setTimeout(() => this._syncClock(n + 1, best), 500); });
     }
 
     on(type, handler) { (this.handlers[type] = this.handlers[type] || []).push(handler); return this; }
