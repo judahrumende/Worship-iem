@@ -13,7 +13,9 @@
      .id                       this client's server-assigned id
    ============================================================= */
 (function () {
-  const WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+  // WI_SERVER_URL can be set in index.html to point to a separate backend host.
+  // If unset, the transport connects to the same host that served the page.
+  const WS_URL = window.WI_SERVER_URL || ((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
 
   class WITransport {
     constructor(room, role) {
