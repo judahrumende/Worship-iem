@@ -219,7 +219,15 @@ function Listener({ room, go }) {
     window.WIClick.setSubdivision(st.subdivision || 'none');
     window.WIClick.setAccent(st.accent !== false);
     window.WIClick.setTransport({ playing: !!st.playing, anchor: st.anchor || 0, bpm: st.bpm || 120, beatsPerBar: st.bpb || 4 });
-  }, [audioOn, st && st.playing, st && st.anchor, st && st.bpm, st && st.bpb, st && st.timbre, st && st.subdivision, st && st.accent]);
+  }, [audioOn, st]);
+
+  /* resume AudioContext when the page comes back from background (mobile) */
+  lE(() => {
+    if (!audioOn) return;
+    const onVisible = () => { if (document.visibilityState === 'visible') window.WIClick.resume().catch(() => {}); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [audioOn]);
 
   lE(() => {
     if (!(st && st.playing && st.countInBars > 0 && Date.now() < (st.anchor || 0))) {
@@ -247,7 +255,12 @@ function Listener({ room, go }) {
   const enterAudio = async () => {
     try { await window.WIClick.resume(); } catch (e) {}
     setAudioOn(true);
-    if (st) window.WIClick.setTransport({ playing: !!st.playing, anchor: st.anchor || 0, bpm: st.bpm || 120, beatsPerBar: st.bpb || 4 });
+    if (st) {
+      window.WIClick.setTimbre(st.timbre || 'wood');
+      window.WIClick.setSubdivision(st.subdivision || 'none');
+      window.WIClick.setAccent(st.accent !== false);
+      window.WIClick.setTransport({ playing: !!st.playing, anchor: st.anchor || 0, bpm: st.bpm || 120, beatsPerBar: st.bpb || 4 });
+    }
     // Connect any pending remote stream
     if (remoteStreamRef.current) {
       connectRemoteStream(remoteStreamRef.current);
