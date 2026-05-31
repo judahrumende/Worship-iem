@@ -1,0 +1,9 @@
+{
+  "hosting": {
+    "public": "worshipiem",
+    "ignore": ["firebase.json", "**/.*"],
+    "rewrites": [
+      { "source": "**", "destination": "/index.html" }
+    ]
+  }
+}
