@@ -2,8 +2,8 @@
    WorshipIEM — Transport (real-time sync layer)
    ----------------------------------------------------------------
    Production implementation: WebSocket to signalling server with
-   NTP-style clock sync. Falls back to BroadcastChannel when
-   running from file:// protocol (same-browser testing).
+   NTP-style clock sync. Falls back to BroadcastChannel when no
+   server is reachable (same-browser tab testing, static hosting).
 
    Interface (stable across implementations):
      new WITransport(room, role)
@@ -21,8 +21,10 @@
       this.handlers = {}; this._ws = null;
       this._id = null; this._queue = []; this._closed = false;
       this._syncTimer = null;
+      this._failCount = 0;
+      this._everConnected = false;
 
-      // Use BroadcastChannel fallback when running from file:// (local dev without server)
+      // Use BroadcastChannel when running from file:// (local dev without server)
       if (location.protocol === 'file:') {
         this._fallback();
         return;
@@ -36,8 +38,11 @@
       try { ws = new WebSocket(WS_URL); }
       catch (e) { this._fallback(); return; }
       this._ws = ws;
+      const openedAt = Date.now();
 
       ws.onopen = () => {
+        this._failCount = 0;
+        this._everConnected = true;
         const myId = `${this.role}_${Math.random().toString(36).slice(2, 8)}`;
         ws.send(JSON.stringify({ type: 'register', room: this.room, role: this.role, id: myId }));
         this._doTimeSync();
@@ -65,23 +70,39 @@
 
       ws.onclose = () => {
         clearInterval(this._syncTimer);
-        if (!this._closed) setTimeout(() => this._connect(), 2000);
+        if (this._closed) return;
+        // If we never connected and failed quickly, it's a "no server" environment
+        const quickFail = !this._everConnected && (Date.now() - openedAt < 1500);
+        if (quickFail) {
+          this._failCount++;
+          if (this._failCount >= 3) { this._fallback(); return; }
+          setTimeout(() => this._connect(), 800);
+        } else {
+          setTimeout(() => this._connect(), 2000);
+        }
       };
       ws.onerror = () => {};
     }
 
     _fallback() {
-      console.warn('[WITransport] WebSocket unavailable — using BroadcastChannel');
+      if (this._closed || this._id) return; // already set up
+      console.warn('[WITransport] No server reachable — using BroadcastChannel (same-browser tabs only)');
       const ch = new BroadcastChannel('worshipiem:' + this.room);
-      this._id = `${this.role}_fallback_${Math.random().toString(36).slice(2, 6)}`;
+      this._id = `${this.role}_${Math.random().toString(36).slice(2, 6)}`;
       ch.onmessage = (e) => {
         const { type, payload, from } = e.data || {};
-        if (from === this.role && from === 'host') return;
+        if (from === this.role && this.role === 'host') return;
         const list = this.handlers[type];
         if (list) list.forEach(h => h(payload));
       };
+      // Drain queue
+      const q = this._queue.splice(0);
       this._raw = (m) => ch.postMessage({ ...m, from: this.role });
+      q.forEach(m => this._raw(m));
       this.close = () => { try { ch.close(); } catch (_) {} this._closed = true; };
+      // Fire a synthetic 'registered' so listeners know their id
+      const list = this.handlers['registered'];
+      if (list) list.forEach(h => h({ id: this._id }));
     }
 
     _doTimeSync() {
