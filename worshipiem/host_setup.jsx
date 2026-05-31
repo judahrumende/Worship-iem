@@ -39,7 +39,9 @@ const SetlistStore = {
 function HostSetup({ go }) {
   const [name, setName] = useStateH('Sunday morning — 9:00');
   const [password, setPassword] = useStateH('');
-  const [code, setCode] = useStateH(makeRoomCode());
+  const [code, setCode] = useStateH(() => {
+    try { return localStorage.getItem('worshipiem:lastCode') || makeRoomCode(); } catch (e) { return makeRoomCode(); }
+  });
   const [songs, setSongs] = useStateH(() => ([
     { id: uid(), name: 'King of kings', key: 'D', bpm: 72, bpb: 4, notes: '' },
     { id: uid(), name: 'What a beautiful name', key: 'D', bpm: 68, bpb: 4, notes: 'Soft start, no click in intro' },
@@ -70,6 +72,7 @@ function HostSetup({ go }) {
 
   const start = () => {
     const room = (code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || makeRoomCode()).slice(0, 6);
+    try { localStorage.setItem('worshipiem:lastCode', room); } catch (e) {}
     window.WISession.save(room, {
       name: name.trim() || 'Worship session', password: password.trim(),
       setlist: cleanSongs(), createdAt: Date.now(),

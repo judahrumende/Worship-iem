@@ -7,10 +7,18 @@ function HostControl({ room, go }) {
   if (!session) {
     return (
       <div className="screen"><TopBar />
-        <div className="wrap fade-in" style={{ paddingTop: 80, textAlign: 'center' }}>
-          <h2 className="serif" style={{ fontSize: 30 }}>Session not found</h2>
-          <p className="muted" style={{ margin: '10px 0 24px' }}>This room has no setlist on this device.</p>
-          <button className="btn btn--primary btn--lg" onClick={() => go('#/create')}>Start a new session</button>
+        <div className="wrap fade-in" style={{ paddingTop: 80, textAlign: 'center', maxWidth: 420, margin: '0 auto' }}>
+          <h2 className="serif" style={{ fontSize: 30 }}>Are you a musician?</h2>
+          <p className="muted" style={{ margin: '10px 0 8px' }}>
+            Room <span className="mono" style={{ fontWeight: 700 }}>{room}</span> has no host session on this device.
+          </p>
+          <p className="muted" style={{ margin: '0 0 28px' }}>
+            If your worship leader sent you this link, tap <strong>Join as listener</strong> below.
+          </p>
+          <button className="btn btn--primary btn--lg btn--block" style={{ marginBottom: 12 }} onClick={() => go('#/listen?room=' + room)}>
+            Join as listener
+          </button>
+          <button className="btn btn--ghost btn--block" onClick={() => go('#/create')}>I'm the host — start a new session</button>
         </div>
       </div>
     );
