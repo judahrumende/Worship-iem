@@ -18,9 +18,22 @@
   <!-- GSAP for animations -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 
-  <!-- Signaling server: after deploying the Cloudflare Worker, uncomment
-       and replace with your workers.dev URL (see worker/wrangler.toml): -->
-  <!-- <script>window.WI_SERVER_URL = 'wss://worship-iem-signal.YOUR-SUBDOMAIN.workers.dev';</script> -->
+  <!-- Firebase Realtime Database (free). Paste your config from the Firebase console here.
+       console.firebase.google.com → your project → Project Settings → Your apps → SDK setup -->
+  <script>
+    window.WI_FIREBASE_CONFIG = {
+      apiKey:            "PASTE_HERE",
+      authDomain:        "PASTE_HERE",
+      databaseURL:       "PASTE_HERE",
+      projectId:         "PASTE_HERE",
+      storageBucket:     "PASTE_HERE",
+      messagingSenderId: "PASTE_HERE",
+      appId:             "PASTE_HERE"
+    };
+  </script>
+  <!-- Firebase SDK (compat) — loaded only when WI_FIREBASE_CONFIG is set above -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 
   <!-- engines (plain JS) -->
   <script src="clock.js"></script>

@@ -1,44 +1,148 @@
 /* =============================================================
    WorshipIEM — Transport (real-time sync layer)
    ----------------------------------------------------------------
-   Production implementation: WebSocket to signalling server with
-   NTP-style clock sync. Falls back to BroadcastChannel when no
-   server is reachable (same-browser tab testing, static hosting).
-
-   Interface (stable across implementations):
-     new WITransport(room, role)
-     .on(type, handler)        subscribe
-     .send(type, payload)      publish
-     .close()
-     .id                       this client's server-assigned id
+   Priority order:
+     1. Firebase Realtime DB  — set window.WI_FIREBASE_CONFIG
+     2. WebSocket server      — set window.WI_SERVER_URL, or deploy
+                                server/ to a host with WS support
+     3. BroadcastChannel      — same-browser tab testing only
    ============================================================= */
 (function () {
-  // WI_SERVER_URL can be set in index.html to point to a separate backend host.
-  // If unset, the transport connects to the same host that served the page.
+
+  /* ============================================================
+     Firebase Transport
+     Used when window.WI_FIREBASE_CONFIG is set in index.html.
+     Free on Firebase's Spark plan (100 connections, 10 GB/mo).
+     ============================================================ */
+  class FirebaseTransport {
+    constructor(room, role) {
+      this.room = room; this.role = role;
+      this.handlers = {}; this._closed = false;
+      this._id = `${role}_${Math.random().toString(36).slice(2, 8)}`;
+      this._subs = []; this._clientRef = null;
+
+      if (!firebase.apps.length) firebase.initializeApp(window.WI_FIREBASE_CONFIG);
+      const db = firebase.database();
+      const R = db.ref('wi/' + room);
+      this._R = R;
+
+      // Listeners receive state updates from host
+      if (role === 'listener') {
+        this._sub(R.child('state'), 'value', s => s.exists() && this._emit('state', s.val()));
+      }
+
+      // Host watches client presence (hello / ping / bye)
+      if (role === 'host') {
+        const cr = R.child('clients');
+        this._sub(cr, 'child_added',   s => { const c = s.val(); if (c) this._emit('hello', c); });
+        this._sub(cr, 'child_changed', s => { const c = s.val(); if (c) this._emit('ping',  c); });
+        this._sub(cr, 'child_removed', s => { const c = s.val(); if (c) this._emit('bye', { id: c.id }); });
+        // Host-addressed inbox (rtc-answer, rtc-ice, etc.)
+        this._sub(R.child('host-inbox'), 'child_added', s => {
+          const m = s.val(); if (m) { this._emit(m.type, m.payload); s.ref.remove(); }
+        });
+      }
+
+      // Per-client inbox (granted, denied, rtc-offer, etc.)
+      this._sub(R.child('inbox/' + this._id), 'child_added', s => {
+        const m = s.val(); if (m) { this._emit(m.type, m.payload); s.ref.remove(); }
+      });
+
+      // Approximate clock sync via Firebase server timestamp
+      this._syncClock();
+      this._syncTimer = setInterval(() => this._syncClock(), 30000);
+
+      setTimeout(() => this._emit('registered', { id: this._id }), 50);
+    }
+
+    _sub(ref, event, cb) {
+      ref.on(event, s => { if (!this._closed) cb(s); });
+      this._subs.push({ ref, event });
+    }
+    _emit(type, payload) { (this.handlers[type] || []).forEach(h => h(payload)); }
+
+    _syncClock() {
+      const t1 = Date.now();
+      const ref = this._R.child('_clk/' + this._id);
+      ref.set({ t: firebase.database.ServerValue.TIMESTAMP }).then(() => {
+        ref.once('value', s => {
+          const serverTs = s.val()?.t;
+          if (!serverTs) return;
+          const t4 = Date.now();
+          const offset = Math.round(serverTs - (t1 + t4) / 2);
+          window.WIClock && window.WIClock.setOffset(offset);
+          ref.remove();
+        });
+      }).catch(() => {});
+    }
+
+    on(type, handler) { (this.handlers[type] = this.handlers[type] || []).push(handler); return this; }
+
+    send(type, payload) {
+      if (this._closed) return;
+
+      if (type === 'state' && this.role === 'host') {
+        this._R.child('state').set(payload); return;
+      }
+      // level / talkreq are high-frequency — skip over Firebase to avoid quota burn
+      if (type === 'level' || type === 'talkreq') return;
+
+      if (type === 'hello' && this.role === 'listener') {
+        const ref = this._R.child('clients/' + this._id);
+        ref.set({ ...payload, id: this._id });
+        ref.onDisconnect().remove();
+        this._clientRef = ref; return;
+      }
+      if (type === 'ping' && this.role === 'listener') {
+        this._R.child('clients/' + this._id).update({ ready: payload.ready }); return;
+      }
+      if (type === 'bye') {
+        if (this._clientRef) this._clientRef.remove(); return;
+      }
+
+      // Targeted: granted / denied / rtc-offer / rtc-answer / rtc-ice
+      const to = payload?.to || payload?.id;
+      if (to && to !== this._id) {
+        this._R.child('inbox/' + to).push({ type, payload }); return;
+      }
+      // Listener → host (no explicit target)
+      if (this.role === 'listener') {
+        this._R.child('host-inbox').push({ type, payload });
+      }
+    }
+
+    close() {
+      this._closed = true;
+      clearInterval(this._syncTimer);
+      this._subs.forEach(({ ref, event }) => ref.off(event));
+      if (this._clientRef) this._clientRef.remove();
+    }
+    get id() { return this._id; }
+  }
+
+
+  /* ============================================================
+     WebSocket Transport
+     Used when WI_FIREBASE_CONFIG is not set. Connects to the
+     Node.js server (server/) or Cloudflare Worker (worker/).
+     Falls back to BroadcastChannel after repeated failures.
+     ============================================================ */
   const WS_URL = window.WI_SERVER_URL || ((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
 
-  class WITransport {
+  class WSTransport {
     constructor(room, role) {
       this.room = room; this.role = role;
       this.handlers = {}; this._ws = null;
       this._id = null; this._queue = []; this._closed = false;
-      this._syncTimer = null;
-      this._failCount = 0;
-      this._everConnected = false;
+      this._syncTimer = null; this._failCount = 0; this._everConnected = false;
 
-      // Use BroadcastChannel when running from file:// (local dev without server)
-      if (location.protocol === 'file:') {
-        this._fallback();
-        return;
-      }
+      if (location.protocol === 'file:') { this._fallback(); return; }
       this._connect();
     }
 
     _connect() {
       if (this._closed) return;
       let ws;
-      // Include room in URL so the Cloudflare Worker can route to the right
-      // Durable Object before the first message; Node.js server ignores it.
       const wsUrl = WS_URL + (WS_URL.includes('?') ? '&' : '?') + 'room=' + encodeURIComponent(this.room);
       try { ws = new WebSocket(wsUrl); }
       catch (e) { this._fallback(); return; }
@@ -46,8 +150,7 @@
       const openedAt = Date.now();
 
       ws.onopen = () => {
-        this._failCount = 0;
-        this._everConnected = true;
+        this._failCount = 0; this._everConnected = true;
         const myId = `${this.role}_${Math.random().toString(36).slice(2, 8)}`;
         ws.send(JSON.stringify({ type: 'register', room: this.room, role: this.role, id: myId }));
         this._doTimeSync();
@@ -59,8 +162,7 @@
         const { type, payload } = msg;
         if (type === 'registered') {
           this._id = msg.id;
-          const q = this._queue.splice(0);
-          q.forEach(m => this._raw(m));
+          this._queue.splice(0).forEach(m => this._raw(m));
           return;
         }
         if (type === 'timesync') {
@@ -76,7 +178,6 @@
       ws.onclose = () => {
         clearInterval(this._syncTimer);
         if (this._closed) return;
-        // If we never connected and failed quickly, it's a "no server" environment
         const quickFail = !this._everConnected && (Date.now() - openedAt < 1500);
         if (quickFail) {
           this._failCount++;
@@ -90,36 +191,27 @@
     }
 
     _fallback() {
-      if (this._closed || this._id) return; // already set up
-      console.warn('[WITransport] No server reachable — using BroadcastChannel (same-browser tabs only)');
+      if (this._closed || this._id) return;
+      console.warn('[WITransport] No server — BroadcastChannel fallback (same browser only)');
       const ch = new BroadcastChannel('worshipiem:' + this.room);
       this._id = `${this.role}_${Math.random().toString(36).slice(2, 6)}`;
       ch.onmessage = (e) => {
         const { type, payload, from } = e.data || {};
         if (from === this.role && this.role === 'host') return;
-        const list = this.handlers[type];
-        if (list) list.forEach(h => h(payload));
+        (this.handlers[type] || []).forEach(h => h(payload));
       };
-      // Drain queue
-      const q = this._queue.splice(0);
       this._raw = (m) => ch.postMessage({ ...m, from: this.role });
-      q.forEach(m => this._raw(m));
+      this._queue.splice(0).forEach(m => this._raw(m));
       this.close = () => { try { ch.close(); } catch (_) {} this._closed = true; };
-      // Fire a synthetic 'registered' so listeners know their id
-      const list = this.handlers['registered'];
-      if (list) list.forEach(h => h({ id: this._id }));
+      (this.handlers['registered'] || []).forEach(h => h({ id: this._id }));
     }
 
-    _doTimeSync() {
-      this._raw({ type: 'timesync', payload: { t1: Date.now() } });
-    }
-
+    _doTimeSync() { this._raw({ type: 'timesync', payload: { t1: Date.now() } }); }
     _raw(msg) {
       if (this._ws && this._ws.readyState === WebSocket.OPEN) {
         try { this._ws.send(JSON.stringify(msg)); } catch (_) {}
       }
     }
-
     on(type, handler) { (this.handlers[type] = this.handlers[type] || []).push(handler); return this; }
     send(type, payload) {
       const msg = { type, payload };
@@ -133,8 +225,16 @@
     get id() { return this._id; }
   }
 
-  /* localStorage snapshot so a late-joining listener (or a reload)
-     can paint last-known state instantly before the host re-broadcasts. */
+
+  /* Factory: pick transport based on config */
+  window.WITransport = function WITransport(room, role) {
+    if (window.WI_FIREBASE_CONFIG) return new FirebaseTransport(room, role);
+    return new WSTransport(room, role);
+  };
+
+
+  /* localStorage snapshot — late-joining listener paints last-known
+     state instantly before the host re-broadcasts */
   const KEY = (room) => 'worshipiem:snap:' + room;
   window.WISnap = {
     save(room, state) { try { localStorage.setItem(KEY(room), JSON.stringify(state)); } catch (e) {} },
@@ -148,7 +248,7 @@
     load(room) { try { return JSON.parse(localStorage.getItem(SKEY(room))); } catch (e) { return null; } },
   };
 
-  /* ---------- theme store (light / dark) ---------- */
+  /* ---------- theme store ---------- */
   const THEME_TOKENS = {
     dark: {
       '--bg': '#0d0d0c', '--surface': '#161614', '--surface-2': '#1f1f1c', '--surface-3': '#292925',
@@ -176,19 +276,14 @@
   }
   window.WITheme = {
     get() { return _theme; },
-    set(t) {
-      _theme = t; try { localStorage.setItem('worshipiem:theme', t); } catch (e) {}
-      applyTheme(t); _subs.forEach((f) => f(t));
-    },
+    set(t) { _theme = t; try { localStorage.setItem('worshipiem:theme', t); } catch (e) {} applyTheme(t); _subs.forEach(f => f(t)); },
     toggle() { this.set(_theme === 'dark' ? 'light' : 'dark'); },
     subscribe(f) { _subs.add(f); return () => _subs.delete(f); },
     apply() { applyTheme(_theme); },
   };
   applyTheme(_theme);
 
-  // Fetch ICE config on load
   window.WIIceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
   fetch('/api/ice-config').then(r => r.json()).then(cfg => { window.WIIceConfig = cfg; }).catch(() => {});
 
-  window.WITransport = WITransport;
 })();
