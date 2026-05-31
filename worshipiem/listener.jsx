@@ -163,8 +163,8 @@ function Listener({ room, go }) {
       setHostLevel(p && p.level ? p.level : 0);
       lvlDecay.current = Date.now();
     });
-    t.on(‘granted’, () => { setAuthed(true); setDenied(false); setPwErr(‘’); });
-    t.on(‘denied’, () => { setDenied(true); setAuthed(false); setPwErr(pw.current ? "That password didn’t match. Try again." : ‘’); });
+    t.on('granted', () => { setAuthed(true); setDenied(false); setPwErr(''); });
+    t.on('denied', () => { setDenied(true); setAuthed(false); setPwErr(pw.current ? "That password didn't match. Try again." : ''); });
 
     // WebRTC: receive offer from host
     t.on('rtc-offer', async (p) => {
