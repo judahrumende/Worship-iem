@@ -153,6 +153,7 @@ function Listener({ room, go }) {
   lE(() => {
     const t = new window.WITransport(room, 'listener');
     tx.current = t;
+    t.on('registered', (p) => { if (p && p.id) myId.current = p.id; });
     t.on('state', (s) => { setSt(s); lastState.current = Date.now(); setConnected(true); });
     t.on('level', (p) => {
       const targeted = p && Array.isArray(p.targets) && p.targets.length > 0;

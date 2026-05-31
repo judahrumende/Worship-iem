@@ -29,6 +29,7 @@
       // Listeners receive state updates from host
       if (role === 'listener') {
         this._sub(R.child('state'), 'value', s => s.exists() && this._emit('state', s.val()));
+        this._sub(R.child('level'), 'value', s => s.exists() && this._emit('level', s.val()));
       }
 
       // Host watches client presence (hello / ping / bye)
@@ -84,8 +85,9 @@
       if (type === 'state' && this.role === 'host') {
         this._R.child('state').set(payload); return;
       }
-      // level / talkreq are high-frequency — skip over Firebase to avoid quota burn
-      if (type === 'level' || type === 'talkreq') return;
+      if (type === 'talkreq') return;
+      if (type === 'level' && this.role === 'host') { this._R.child('level').set(payload); return; }
+      if (type === 'level') return;
 
       if (type === 'hello' && this.role === 'listener') {
         const ref = this._R.child('clients/' + this._id);
