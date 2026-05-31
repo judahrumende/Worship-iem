@@ -37,7 +37,10 @@
     _connect() {
       if (this._closed) return;
       let ws;
-      try { ws = new WebSocket(WS_URL); }
+      // Include room in URL so the Cloudflare Worker can route to the right
+      // Durable Object before the first message; Node.js server ignores it.
+      const wsUrl = WS_URL + (WS_URL.includes('?') ? '&' : '?') + 'room=' + encodeURIComponent(this.room);
+      try { ws = new WebSocket(wsUrl); }
       catch (e) { this._fallback(); return; }
       this._ws = ws;
       const openedAt = Date.now();

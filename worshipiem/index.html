@@ -18,9 +18,9 @@
   <!-- GSAP for animations -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 
-  <!-- Server config: if your static files are hosted separately from the
-       Node.js server (e.g. Cloudflare Pages + Railway), uncomment and set: -->
-  <!-- <script>window.WI_SERVER_URL = 'wss://YOUR-APP.up.railway.app';</script> -->
+  <!-- Signaling server: after deploying the Cloudflare Worker, uncomment
+       and replace with your workers.dev URL (see worker/wrangler.toml): -->
+  <!-- <script>window.WI_SERVER_URL = 'wss://worship-iem-signal.YOUR-SUBDOMAIN.workers.dev';</script> -->
 
   <!-- engines (plain JS) -->
   <script src="clock.js"></script>
