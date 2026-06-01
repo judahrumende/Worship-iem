@@ -37,9 +37,12 @@
       if (!this.ctx) {
         const AC = window.AudioContext || window.webkitAudioContext;
         this.ctx = new AC({ latencyHint: 'interactive' });
-        this.master = this.ctx.createGain();
-        this.master.gain.value = 60;
-        this.master.connect(this.ctx.destination);
+        this.boost = this.ctx.createGain();
+        this.boost.gain.value = 60;          // master amplitude — never touched by the slider
+        this.master = this.ctx.createGain(); // slider-controlled, 0..1
+        this.master.gain.value = 1;
+        this.master.connect(this.boost);
+        this.boost.connect(this.ctx.destination);
         this._sync();
       }
       if (this.ctx.state === 'suspended') await this.ctx.resume();
