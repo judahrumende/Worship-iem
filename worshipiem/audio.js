@@ -38,7 +38,7 @@
         const AC = window.AudioContext || window.webkitAudioContext;
         this.ctx = new AC({ latencyHint: 'interactive' });
         this.boost = this.ctx.createGain();
-        this.boost.gain.value = 60;          // master amplitude — never touched by the slider
+        this.boost.gain.value = 100;          // master amplitude — never touched by the slider
         this.master = this.ctx.createGain(); // slider-controlled, 0..1
         this.master.gain.value = 1;
         this.master.connect(this.boost);
