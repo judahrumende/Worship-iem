@@ -62,8 +62,7 @@ function App() {
 
   const { path, params } = route;
   let screen;
-  if (path === '/create') screen = <HostSetup go={go} />;
-  else if (path === '/host') screen = params.room ? <HostControl key={params.room} room={params.room} go={go} /> : <Landing go={go} />;
+  if (path === '/host') screen = params.room ? <HostControl key={params.room} room={params.room} go={go} /> : <Landing go={go} />;
   else if (path === '/join') screen = <JoinScreen go={go} presetRoom={(params.room || '').toUpperCase()} />;
   else if (path === '/listen') screen = params.room ? <Listener key={params.room} room={(params.room || '').toUpperCase()} go={go} /> : <JoinScreen go={go} />;
   else screen = <Landing go={go} />;

@@ -1,8 +1,21 @@
 /* WorshipIEM — Landing (light editorial, Basis-style hero) */
 const { useState: lpS, useRef: lpR } = React;
 
+const LP_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+function lpMakeCode() { return Array.from({length: 4}, () => LP_CODE_CHARS[Math.floor(Math.random() * LP_CODE_CHARS.length)]).join(''); }
+
 function Landing({ go }) {
   const rootRef = lpR(null);
+
+  const hostSession = () => {
+    let code;
+    try { code = localStorage.getItem('worshipiem:lastCode'); } catch(e) {}
+    if (!code) {
+      code = lpMakeCode();
+      try { localStorage.setItem('worshipiem:lastCode', code); } catch(e) {}
+    }
+    go('#/host?room=' + code);
+  };
 
   // GSAP entrance animation
   React.useEffect(() => {
@@ -61,7 +74,7 @@ function Landing({ go }) {
           <a className="lp-link" onClick={(e) => e.preventDefault()}>For bands</a>
           <a className="lp-link" onClick={(e) => e.preventDefault()}>FAQ</a>
           <a className="lp-link" onClick={() => go('#/join')}>Join a session</a>
-          <button className="lp-pill-btn" onClick={() => go('#/create')}>Host a session</button>
+          <button className="lp-pill-btn" onClick={hostSession}>Host a session</button>
         </div>
       </nav>
 
@@ -82,7 +95,7 @@ function Landing({ go }) {
             fight. You just play.
           </p>
           <div className="lp-rise" style={{ display: 'flex', gap: 14, flexWrap: 'wrap', animationDelay: '.18s' }}>
-            <button className="lp-cta lp-cta--dark" onClick={() => go('#/create')}><WIcon name="radio" size={20} /> Host a session</button>
+            <button className="lp-cta lp-cta--dark" onClick={hostSession}><WIcon name="radio" size={20} /> Host a session</button>
             <button className="lp-cta lp-cta--light" onClick={() => go('#/join')}>Join with a code <WIcon name="arrowRight" size={19} /></button>
           </div>
           <div className="lp-rise" style={{ display: 'flex', gap: 46, marginTop: 48, animationDelay: '.24s' }}>
