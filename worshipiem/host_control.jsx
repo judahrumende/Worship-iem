@@ -1,21 +1,28 @@
 /* WorshipIEM — Host live control surface */
 const { useState: uS, useEffect: uE, useRef: uR, useMemo: uM, useCallback: uC } = React;
-const uid = () => Math.random().toString(36).slice(2, 9);
-const KEYS = ['C','C#','Db','D','Eb','E','F','F#','G','Ab','A','Bb','B','Am','Bm','C#m','Dm','Em','F#m','Gm'];
-function listenerLink(room) { return location.origin + location.pathname + '#/listen?room=' + room; }
-
-const songChip = { display: 'flex', flexDirection: 'column', gap: 2, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px 6px' };
-const songSel = { background: 'transparent', border: 0, color: 'var(--fg-1)', fontSize: 14, fontWeight: 700, outline: 'none', cursor: 'pointer', padding: 0, lineHeight: 1.3 };
 
 function HostControl({ room, go }) {
-  const [session] = uS(() => {
-    try { localStorage.setItem('worshipiem:lastCode', room); } catch(e) {}
-    const ex = window.WISession.load(room);
-    if (ex) return ex;
-    const s = { name: 'Worship session', password: '', setlist: [{ id: uid(), name: 'Song 1', key: 'C', bpm: 120, bpb: 4, notes: '' }], createdAt: Date.now() };
-    window.WISession.save(room, s);
-    return s;
-  });
+  const session = uM(() => window.WISession.load(room), [room]);
+
+  if (!session) {
+    return (
+      <div className="screen"><TopBar />
+        <div className="wrap fade-in" style={{ paddingTop: 80, textAlign: 'center', maxWidth: 420, margin: '0 auto' }}>
+          <h2 className="serif" style={{ fontSize: 30 }}>Are you a musician?</h2>
+          <p className="muted" style={{ margin: '10px 0 8px' }}>
+            Room <span className="mono" style={{ fontWeight: 700 }}>{room}</span> has no host session on this device.
+          </p>
+          <p className="muted" style={{ margin: '0 0 28px' }}>
+            If your worship leader sent you this link, tap <strong>Join as listener</strong> below.
+          </p>
+          <button className="btn btn--primary btn--lg btn--block" style={{ marginBottom: 12 }} onClick={() => go('#/listen?room=' + room)}>
+            Join as listener
+          </button>
+          <button className="btn btn--ghost btn--block" onClick={() => go('#/create')}>I'm the host — start a new session</button>
+        </div>
+      </div>
+    );
+  }
 
   const [setlist, setSetlist] = uS(session.setlist);
   const [activeId, setActiveId] = uS(session.setlist[0]?.id || null);
@@ -45,7 +52,6 @@ function HostControl({ room, go }) {
   const [advanced, setAdvanced] = uS(false);
   const [activeCueId, setActiveCueId] = uS(null);
   const [talkTargets, setTalkTargets] = uS([]);
-  const [expandedSong, setExpandedSong] = uS(null);
 
   const tx = uR(null);
   const tapTimes = uR([]);
@@ -118,33 +124,6 @@ function HostControl({ room, go }) {
   };
   const broadcast = () => { if (tx.current) tx.current.send('state', stateObj()); };
   broadcastRef.current = broadcast;
-
-  const addSong = () => setSetlist(s => [...s, { id: uid(), name: 'New song', key: 'C', bpm: 120, bpb: 4, notes: '' }]);
-  const updateSong = (id, p) => setSetlist(s => s.map(x => x.id === id ? { ...x, ...p } : x));
-  const removeSong = (id) => { setSetlist(s => s.filter(x => x.id !== id)); setExpandedSong(v => v === id ? null : v); };
-
-  // Persist setlist edits back to localStorage
-  uE(() => {
-    window.WISession.save(room, { name: session.name, password: session.password || '', setlist, createdAt: session.createdAt || Date.now() });
-  }, [setlist]);
-
-  // Keyboard shortcuts — refs so the handler never goes stale
-  const toggleRef = uR(null); toggleRef.current = toggle;
-  const nextRef = uR(null); nextRef.current = nextSong;
-  const activateRef = uR(null); activateRef.current = activate;
-  const setlistRef = uR(setlist);
-  uE(() => { setlistRef.current = setlist; }, [setlist]);
-  uE(() => {
-    const h = (e) => {
-      if (['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)) return;
-      const n = parseInt(e.key);
-      if (n >= 1 && n <= 9 && setlistRef.current[n - 1]) { activateRef.current(setlistRef.current[n - 1].id); return; }
-      if (e.key === ' ') { e.preventDefault(); toggleRef.current(); }
-      if (e.key === 'ArrowRight') { e.preventDefault(); nextRef.current(); }
-    };
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  }, []);
 
   uE(() => { window.WIClick.setTransport({ playing, anchor, bpm, beatsPerBar: bpb }); }, [playing, anchor, bpm, bpb, ready]);
   uE(() => { window.WIClick.setVolume(clickVol / 100); }, [clickVol]);
@@ -393,63 +372,29 @@ function HostControl({ room, go }) {
               <div>
                 {setlist.map((s, i) => {
                   const on = s.id === activeId;
-                  const exp = expandedSong === s.id;
                   return (
                     <div key={s.id} draggable
                       onDragStart={() => { dragFrom.current = i; }}
                       onDragOver={(e) => e.preventDefault()}
-                      onDrop={() => { reorder(dragFrom.current, i); dragFrom.current = null; }}>
-                      {/* main row */}
-                      <div onClick={() => activate(s.id)} style={{
-                        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', cursor: 'pointer',
+                      onDrop={() => { reorder(dragFrom.current, i); dragFrom.current = null; }}
+                      onClick={() => activate(s.id)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', cursor: 'pointer',
                         background: on ? 'var(--accent-soft)' : 'transparent', borderTop: '1px solid var(--border)',
                         borderLeft: '3px solid ' + (on ? 'var(--accent)' : 'transparent'), transition: 'background 180ms var(--ease)',
                       }}>
-                        <span style={{ color: 'var(--fg-3)', cursor: 'grab', display: 'flex' }} onClick={e => e.stopPropagation()}><WIcon name="grip2" size={15} /></span>
-                        <span className="mono" style={{ width: 16, color: on ? 'var(--accent)' : 'var(--fg-3)', fontWeight: 700, fontSize: 13 }}>{i + 1}</span>
-                        <input value={s.name} placeholder="Song name"
-                          onChange={e => { e.stopPropagation(); updateSong(s.id, { name: e.target.value }); }}
-                          onClick={e => e.stopPropagation()}
-                          style={{ flex: 1, background: 'transparent', border: 0, outline: 'none', fontWeight: on ? 600 : 500, fontSize: 15, color: on ? 'var(--fg-1)' : 'var(--fg-2)', padding: 0, fontFamily: 'var(--font-sans)', cursor: 'text', minWidth: 0 }} />
-                        {on && playing && <span className="chip chip--live" style={{ height: 22, fontSize: 11 }}><span className="dot" />live</span>}
-                        {s.key && <span className="mono dim" style={{ fontSize: 12, fontWeight: 600 }}>{s.key}</span>}
-                        <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: on ? 'var(--fg-1)' : 'var(--fg-3)' }}>{s.bpm}</span>
-                        <button className="btn btn--ghost btn--icon" style={{ height: 28, width: 28, flex: 'none', color: exp ? 'var(--accent)' : undefined }}
-                          onClick={e => { e.stopPropagation(); setExpandedSong(exp ? null : s.id); }}>
-                          <WIcon name="sliders" size={14} />
-                        </button>
+                      <span style={{ color: 'var(--fg-3)', cursor: 'grab', display: 'flex' }} onClick={e => e.stopPropagation()}><WIcon name="grip2" size={16} /></span>
+                      <span className="mono" style={{ width: 18, color: on ? 'var(--accent)' : 'var(--fg-3)', fontWeight: 700 }}>{i + 1}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: on ? 600 : 500, fontSize: 16, color: on ? 'var(--fg-1)' : 'var(--fg-2)' }}>{s.name}</div>
+                        {s.notes && <div className="dim" style={{ fontSize: 12, marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.notes}</div>}
                       </div>
-                      {/* expanded edit row */}
-                      {exp && (
-                        <div style={{ display: 'flex', gap: 6, padding: '8px 12px 10px', borderTop: '1px solid var(--border)', background: 'var(--surface-2)', flexWrap: 'wrap', alignItems: 'center' }}
-                          onClick={e => e.stopPropagation()}>
-                          <label style={songChip}><span className="overline" style={{ fontSize: 10 }}>Key</span>
-                            <select className="mono" value={s.key || 'C'} onChange={e => updateSong(s.id, { key: e.target.value })} style={songSel}>
-                              {KEYS.map(k => <option key={k} value={k}>{k}</option>)}
-                            </select>
-                          </label>
-                          <label style={songChip}><span className="overline" style={{ fontSize: 10 }}>BPM</span>
-                            <input type="number" min="20" max="300" value={s.bpm} onChange={e => updateSong(s.id, { bpm: +e.target.value || 120 })} style={{ ...songSel, width: 52 }} />
-                          </label>
-                          <label style={songChip}><span className="overline" style={{ fontSize: 10 }}>Time</span>
-                            <select className="mono" value={s.bpb} onChange={e => updateSong(s.id, { bpb: +e.target.value })} style={songSel}>
-                              <option value={4}>4/4</option><option value={3}>3/4</option><option value={6}>6/8</option><option value={2}>2/4</option>
-                            </select>
-                          </label>
-                          <input placeholder="Notes" value={s.notes || ''} onChange={e => updateSong(s.id, { notes: e.target.value })}
-                            style={{ flex: 1, minWidth: 100, height: 32, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', color: 'var(--fg-1)', fontSize: 13, padding: '0 9px', outline: 'none', fontFamily: 'var(--font-sans)' }} />
-                          <button className="btn btn--ghost btn--icon btn--danger" style={{ height: 32, width: 32 }} onClick={() => removeSong(s.id)}>
-                            <WIcon name="trash" size={14} />
-                          </button>
-                        </div>
-                      )}
+                      {on && playing && <span className="chip chip--live" style={{ height: 24 }}><span className="dot" />live</span>}
+                      {s.key && <span className="mono dim" style={{ fontSize: 13, fontWeight: 600 }}>{s.key}</span>}
+                      <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: on ? 'var(--fg-1)' : 'var(--fg-3)' }}>{s.bpm}</span>
                     </div>
                   );
                 })}
-                <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <button className="btn btn--ghost" style={{ height: 34, fontSize: 13, flex: 1 }} onClick={addSong}><WIcon name="plus" size={15} /> Add song</button>
-                  <span className="dim" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>1–9 · Space · →</span>
-                </div>
               </div>
             ) : (
               <div style={{ padding: 8 }}>
