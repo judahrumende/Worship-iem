@@ -38,7 +38,7 @@
         const AC = window.AudioContext || window.webkitAudioContext;
         this.ctx = new AC({ latencyHint: 'interactive' });
         this.master = this.ctx.createGain();
-        this.master.gain.value = 1.7;
+        this.master.gain.value = 1.275;
         this.master.connect(this.ctx.destination);
         this._sync();
       }
