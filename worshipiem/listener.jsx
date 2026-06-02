@@ -1,5 +1,5 @@
 /* WorshipIEM — Listener: join (name + instrument) + live in-ear */
-const { useState: lS, useEffect: lE, useRef: lR, useCallback: lC } = React;
+const { useState: lS, useEffect: lE, useRef: lR } = React;
 
 function getStore(k, d) { try { return localStorage.getItem('worshipiem:' + k) || d; } catch (e) { return d; } }
 function setStore(k, v) { try { localStorage.setItem('worshipiem:' + k, v); } catch (e) {} }
@@ -9,26 +9,16 @@ function JoinScreen({ go, presetRoom }) {
   const [code, setCode] = lS(presetRoom || '');
   const [name, setNm] = lS(getStore('name', ''));
   const [inst, setInst] = lS(getStore('inst', 'Drums'));
-  const [attempted, setAttempted] = lS(false);
-  const nameRef = lR(null);
-  const codeRef = lR(null);
-
-  const codeOk = code.trim().length >= 4;
-  const nameOk = !!name.trim();
-  const valid = codeOk && nameOk;
-
+  const valid = code.trim().length >= 4 && name.trim();
   const join = () => {
-    setAttempted(true);
-    if (!codeOk) { codeRef.current && codeRef.current.focus(); return; }
-    if (!nameOk) { nameRef.current && nameRef.current.focus(); return; }
+    if (!valid) return;
     setStore('name', name.trim()); setStore('inst', inst);
     go('#/listen?room=' + code.trim().toUpperCase());
   };
-
   return (
     <div className="screen">
       <TopBar right={<button className="btn btn--ghost" onClick={() => go('#/')}>Back</button>} />
-      <div className="wrap" style={{ maxWidth: 480, paddingTop: 36, paddingBottom: 60, margin: '0 auto' }}>
+      <div className="wrap fade-in" style={{ maxWidth: 480, paddingTop: 36, paddingBottom: 60, margin: '0 auto' }}>
         <div style={{ textAlign: 'center', marginBottom: 26 }}>
           <div style={{ width: 60, height: 60, borderRadius: 17, background: 'var(--surface-2)', border: '1px solid var(--border)', display: 'grid', placeItems: 'center', margin: '0 auto 16px', color: 'var(--accent)' }}>
             <WIcon name="headphones" size={28} />
@@ -37,19 +27,13 @@ function JoinScreen({ go, presetRoom }) {
           <p className="muted">Enter the room code from your worship leader.</p>
         </div>
 
-        <input ref={codeRef} className={'codebox' + (attempted && !codeOk ? ' input--error' : '')}
-          value={code} maxLength={6} autoFocus
+        <input className="codebox" value={code} maxLength={6} autoFocus
           onChange={e => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-          onKeyDown={e => e.key === 'Enter' && join()} placeholder="––––" />
+          onKeyDown={e => e.key === 'Enter' && valid && join()} placeholder="––––" />
 
         <div className="field" style={{ marginTop: 18 }}>
-          <label style={{ color: attempted && !nameOk ? 'var(--accent)' : undefined }}>
-            Your name{attempted && !nameOk ? ' — required' : ''}
-          </label>
-          <input ref={nameRef}
-            className={'input' + (attempted && !nameOk ? ' input--error' : '')}
-            value={name} onChange={e => setNm(e.target.value)}
-            placeholder="e.g. Sam" />
+          <label>Your name</label>
+          <input className="input" value={name} onChange={e => setNm(e.target.value)} placeholder="e.g. Sam" />
         </div>
 
         <div className="field" style={{ marginTop: 16 }}>
@@ -74,7 +58,7 @@ function JoinScreen({ go, presetRoom }) {
           </div>
         </div>
 
-        <button className="btn btn--primary btn--lg btn--block" style={{ marginTop: 24 }} onClick={join}>
+        <button className="btn btn--primary btn--lg btn--block" style={{ marginTop: 24 }} disabled={!valid} onClick={join}>
           Join <WIcon name="arrowRight" size={20} />
         </button>
       </div>
@@ -93,12 +77,12 @@ function Listener({ room, go }) {
   const [clickVol, setClickVol] = lS(80);
   const [micVol, setMicVol] = lS(85);
   const [hostLevel, setHostLevel] = lS(0);
+  const [addressed, setAddressed] = lS(false);
+  const [inCountIn, setInCountIn] = lS(false);
   const [vibrate, setVibrate] = lS(false);
   const [talking, setTalking] = lS(false);
   const [pwInput, setPwInput] = lS('');
   const [pwErr, setPwErr] = lS('');
-  const [addressed, setAddressed] = lS(false);
-  const [inCountIn, setInCountIn] = lS(false);
 
   const tx = lR(null);
   const myId = lR('L' + Math.random().toString(36).slice(2, 8));
@@ -110,105 +94,74 @@ function Listener({ room, go }) {
   const vibrateRef = lR(false);
   const readyRef = lR(false);
   const talkTimer = lR(null);
-  const vibSupported = typeof navigator !== 'undefined' && !!navigator.vibrate;
-
-  // WebRTC refs
   const pcRef = lR(null);
-  const remoteStreamRef = lR(null);
-  const remoteGainRef = lR(null);
-  const connectRemoteStreamRef = lR(null);
-  const icePendingRef = lR([]);  // queue candidates that arrive before setRemoteDescription
-
+  const icePendingRef = lR([]);
+  const remoteAudioRef = lR(null);
+  const vibSupported = typeof navigator !== 'undefined' && !!navigator.vibrate;
   lE(() => { vibrateRef.current = vibrate; }, [vibrate]);
   lE(() => { readyRef.current = iAmReady; }, [iAmReady]);
 
   const sendHello = () => tx.current && tx.current.send('hello', { id: myId.current, name: myName.current, instrument: myInst.current, ready: readyRef.current, password: pw.current });
   const ping = () => tx.current && tx.current.send('ping', { id: myId.current, name: myName.current, instrument: myInst.current, ready: readyRef.current });
 
-  // Connect remote WebRTC audio stream to AudioContext
-  const connectRemoteStream = lC((stream) => {
-    const ctx = window.WIClick.getCtx();
-    if (!ctx || ctx.state === 'suspended') { remoteStreamRef.current = stream; return; }
-    if (remoteGainRef.current) return;
-    try {
-      const src = ctx.createMediaStreamSource(stream);
-      const gain = ctx.createGain();
-      gain.gain.value = micVol / 100;
-      src.connect(gain);
-      gain.connect(ctx.destination);
-      remoteGainRef.current = gain;
-    } catch (e) {
-      remoteStreamRef.current = stream; // retry when audio context is ready
-    }
-  }, [micVol]);
-  connectRemoteStreamRef.current = connectRemoteStream;
-
-  // Update remote gain when micVol changes
-  lE(() => {
-    if (remoteGainRef.current) {
-      try {
-        const ctx = window.WIClick.getCtx();
-        if (ctx) remoteGainRef.current.gain.setTargetAtTime(micVol / 100, ctx.currentTime, 0.05);
-      } catch (_) {}
-    }
-  }, [micVol]);
-
   lE(() => {
     const t = new window.WITransport(room, 'listener');
     tx.current = t;
+
+    // Sync our myId to the transport's actual assigned id (critical for Firebase routing)
     t.on('registered', (p) => { if (p && p.id) myId.current = p.id; });
+
     t.on('state', (s) => { setSt(s); lastState.current = Date.now(); setConnected(true); });
     t.on('level', (p) => {
       const targeted = p && Array.isArray(p.targets) && p.targets.length > 0;
-      if (targeted && !p.targets.includes(myId.current)) {
-        setHostLevel(0); setAddressed(false); return;
-      }
+      if (targeted && !p.targets.includes(myId.current)) { setHostLevel(0); setAddressed(false); return; }
       setAddressed(targeted);
-      setHostLevel(p && p.level ? p.level : 0);
-      lvlDecay.current = Date.now();
+      setHostLevel(p && p.level ? p.level : 0); lvlDecay.current = Date.now();
     });
-    t.on('granted', () => { setAuthed(true); setDenied(false); setPwErr(''); });
-    t.on('denied', () => { setDenied(true); setAuthed(false); setPwErr(pw.current ? "That password didn't match. Try again." : ''); });
+    t.on('granted', (p) => { if (p && (p.id === myId.current || !p.id)) { setAuthed(true); setDenied(false); setPwErr(''); } });
+    t.on('denied', (p) => { if (p && (p.id === myId.current || !p.id)) { setDenied(true); setAuthed(false); setPwErr(pw.current ? 'That password didn\u2019t match. Try again.' : ''); } });
 
-    // WebRTC: receive offer from host
+    // WebRTC \u2014 host sends an offer per listener when mic goes live
     t.on('rtc-offer', async (p) => {
       if (!p || !p.sdp) return;
-      const iceConfig = window.WIIceConfig || { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
       if (pcRef.current) { try { pcRef.current.close(); } catch (_) {} }
-      remoteGainRef.current = null;
-      icePendingRef.current = []; // discard stale candidates for old connection
+      const iceConfig = window.WIIceConfig || { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
       const pc = new RTCPeerConnection(iceConfig);
       pcRef.current = pc;
+      icePendingRef.current = [];
+      pc.ontrack = (e) => {
+        const stream = (e.streams && e.streams[0]) || new MediaStream([e.track]);
+        if (!remoteAudioRef.current) {
+          const audio = new Audio();
+          audio.autoplay = true;
+          remoteAudioRef.current = audio;
+        }
+        remoteAudioRef.current.srcObject = stream;
+        remoteAudioRef.current.volume = (window._listenerMicVol != null ? window._listenerMicVol : 1);
+        remoteAudioRef.current.play().catch(() => {});
+      };
       pc.onicecandidate = (e) => {
         if (e.candidate && tx.current)
           tx.current.send('rtc-ice', { id: myId.current, candidate: e.candidate.toJSON() });
       };
-      // e.streams[0] is undefined on iOS Safari — fall back to wrapping the track directly
-      pc.ontrack = (e) => {
-        const stream = (e.streams && e.streams[0]) || new MediaStream([e.track]);
-        connectRemoteStreamRef.current(stream);
-      };
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(p.sdp));
-        // Drain any ICE candidates that arrived before setRemoteDescription completed
         for (const c of icePendingRef.current) {
           try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch (_) {}
         }
         icePendingRef.current = [];
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        tx.current && tx.current.send('rtc-answer', { id: myId.current, sdp: pc.localDescription });
-      } catch (err) { console.warn('WebRTC answer error:', err); }
+        tx.current.send('rtc-answer', { id: myId.current, sdp: pc.localDescription });
+      } catch (e) { console.warn('[WI] WebRTC offer error', e); }
     });
-
-    // WebRTC: receive ICE candidate from host
     t.on('rtc-ice', async (p) => {
       if (!p || !p.candidate) return;
       const pc = pcRef.current;
       if (pc && pc.remoteDescription) {
         try { await pc.addIceCandidate(new RTCIceCandidate(p.candidate)); } catch (_) {}
       } else {
-        icePendingRef.current.push(p.candidate); // queue until setRemoteDescription is done
+        icePendingRef.current.push(p.candidate);
       }
     });
 
@@ -223,6 +176,7 @@ function Listener({ room, go }) {
       clearInterval(pingId); clearInterval(stale); clearInterval(talkTimer.current);
       t.send('bye', { id: myId.current }); t.close();
       if (pcRef.current) { try { pcRef.current.close(); } catch (_) {} pcRef.current = null; }
+      if (remoteAudioRef.current) { remoteAudioRef.current.srcObject = null; remoteAudioRef.current = null; }
     };
   }, [room]);
 
@@ -233,26 +187,7 @@ function Listener({ room, go }) {
     window.WIClick.setSubdivision(st.subdivision || 'none');
     window.WIClick.setAccent(st.accent !== false);
     window.WIClick.setTransport({ playing: !!st.playing, anchor: st.anchor || 0, bpm: st.bpm || 120, beatsPerBar: st.bpb || 4 });
-  }, [audioOn, st]);
-
-  /* resume AudioContext when the page comes back from background (mobile) */
-  lE(() => {
-    if (!audioOn) return;
-    const onVisible = () => { if (document.visibilityState === 'visible') window.WIClick.resume().catch(() => {}); };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [audioOn]);
-
-  lE(() => {
-    if (!(st && st.playing && st.countInBars > 0 && Date.now() < (st.anchor || 0))) {
-      setInCountIn(false); return;
-    }
-    setInCountIn(true);
-    const id = setInterval(() => {
-      if (Date.now() >= (st.anchor || 0)) { setInCountIn(false); clearInterval(id); }
-    }, 50);
-    return () => clearInterval(id);
-  }, [st && st.anchor, st && st.playing, st && st.countInBars]);
+  }, [audioOn, st && st.playing, st && st.anchor, st && st.bpm, st && st.bpb, st && st.timbre, st && st.subdivision, st && st.accent]);
 
   lE(() => {
     const master = st ? (st.clickVol ?? 80) : 80;
@@ -266,20 +201,38 @@ function Listener({ room, go }) {
     return () => { window.WIClick.onBeat = null; };
   }, [audioOn]);
 
+  /* keep WebRTC talkback volume in sync with the listener's mix slider */
+  lE(() => {
+    window._listenerMicVol = micVol / 100;
+    if (remoteAudioRef.current) remoteAudioRef.current.volume = micVol / 100;
+  }, [micVol]);
+
+  /* resume AudioContext when the app comes back to the foreground on mobile */
+  lE(() => {
+    const h = () => {
+      if (document.visibilityState === 'visible') {
+        const ctx = window.WIClick.getCtx && window.WIClick.getCtx();
+        if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+        if (remoteAudioRef.current && remoteAudioRef.current.paused && remoteAudioRef.current.srcObject)
+          remoteAudioRef.current.play().catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', h);
+    return () => document.removeEventListener('visibilitychange', h);
+  }, []);
+
+  /* count-in tracking from the shared anchor (downbeat in the future) */
+  lE(() => {
+    if (!(st && st.playing && st.countInBars > 0 && Date.now() < (st.anchor || 0))) { setInCountIn(false); return; }
+    setInCountIn(true);
+    const id = setInterval(() => { if (Date.now() >= (st.anchor || 0)) { setInCountIn(false); clearInterval(id); } }, 50);
+    return () => clearInterval(id);
+  }, [st && st.anchor, st && st.playing, st && st.countInBars]);
+
   const enterAudio = async () => {
     try { await window.WIClick.resume(); } catch (e) {}
     setAudioOn(true);
-    if (st) {
-      window.WIClick.setTimbre(st.timbre || 'wood');
-      window.WIClick.setSubdivision(st.subdivision || 'none');
-      window.WIClick.setAccent(st.accent !== false);
-      window.WIClick.setTransport({ playing: !!st.playing, anchor: st.anchor || 0, bpm: st.bpm || 120, beatsPerBar: st.bpb || 4 });
-    }
-    // Connect any pending remote stream
-    if (remoteStreamRef.current) {
-      connectRemoteStream(remoteStreamRef.current);
-      remoteStreamRef.current = null;
-    }
+    if (st) window.WIClick.setTransport({ playing: !!st.playing, anchor: st.anchor || 0, bpm: st.bpm || 120, beatsPerBar: st.bpb || 4 });
   };
 
   const submitPw = () => { pw.current = pwInput.trim(); setPwErr(''); setDenied(false); sendHello(); };
@@ -352,23 +305,9 @@ function Listener({ room, go }) {
 
         <div style={{ position: 'relative' }}>
           <Metronome playing={!!(st && st.playing)} anchor={(st && st.anchor) || 0} bpm={(st && st.bpm) || 120} beatsPerBar={bpb} size={300} />
-          {inCountIn && (
-            <CountInOverlay active={true} anchor={(st && st.anchor) || 0} bpm={(st && st.bpm) || 120}
-              beatsPerBar={bpb} bars={(st && st.countInBars) || 1} onDone={() => setInCountIn(false)} />
-          )}
+          <CountInOverlay active={inCountIn} anchor={(st && st.anchor) || 0} bpm={(st && st.bpm) || 120} beatsPerBar={bpb} bars={(st && st.countInBars) || 1} onDone={() => setInCountIn(false)} />
         </div>
         <div className="mono muted" style={{ fontSize: 15 }}>{TS_LABEL[bpb] || '4/4'} · {(st && st.bpm) || '—'} bpm{st && st.subdivision && st.subdivision !== 'none' ? ' · ' + SUBDIV_LABEL[st.subdivision] : ''}</div>
-        {addressed && (
-          <div style={{
-            background: 'var(--accent-soft)', border: '1px solid var(--accent)',
-            borderRadius: 'var(--r-md)', padding: '8px 14px', width: '100%',
-            display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, fontWeight: 600,
-          }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', flex: 'none', animation: 'fadein 0s' }} />
-            Leader is talking to you
-            <span className="dim" style={{ fontWeight: 400, marginLeft: 'auto', fontSize: 13 }}>Just for you</span>
-          </div>
-        )}
 
         {/* ready + vibrate */}
         <div style={{ display: 'flex', gap: 10, width: '100%' }}>
@@ -393,7 +332,8 @@ function Listener({ room, go }) {
             transition: 'background 120ms, box-shadow 80ms linear',
           }}><WIcon name={st && st.micOn ? 'mic' : 'micOff'} size={20} /></span>
           <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 600, fontSize: 15 }}>{st && st.micOn ? (speaking ? 'Leader is talking' : 'Leader mic is open') : 'Leader mic is off'}</div>
+            <div style={{ fontWeight: 600, fontSize: 15, color: speaking && addressed ? 'var(--accent)' : 'var(--fg-1)' }}>{st && st.micOn ? (speaking ? (addressed ? 'Leader is talking to you' : 'Leader is talking') : 'Leader mic is open') : 'Leader mic is off'}</div>
+            {speaking && addressed && <div className="dim" style={{ fontSize: 12, marginTop: 1 }}>Just for you — the rest of the band can’t hear this.</div>}
             <div className="meter" style={{ marginTop: 7 }}><i style={{ width: (st && st.micOn ? hostLevel * (micVol / 100) * 100 : 0) + '%' }} /></div>
           </div>
         </div>

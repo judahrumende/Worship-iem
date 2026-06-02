@@ -44,33 +44,18 @@ function TopBar({ live, right, sub }) {
   );
 }
 
-/* ----- Animated BPM display (GSAP number tween) ----- */
-function AnimatedBpm({ value, className, style }) {
-  const [display, setDisplay] = React.useState(value);
-  const fromRef = React.useRef(value);
-  React.useEffect(() => {
-    if (typeof gsap === 'undefined') { fromRef.current = value; setDisplay(value); return; }
-    if (fromRef.current === value) return;
-    const startVal = fromRef.current;
-    const obj = { n: startVal };
-    gsap.to(obj, {
-      n: value, duration: 0.35, ease: 'power2.out',
-      onUpdate() { setDisplay(Math.round(obj.n)); },
-      onComplete() { fromRef.current = value; setDisplay(value); },
-    });
-  }, [value]);
-  return <span className={className} style={style}>{display || '—'}</span>;
-}
-
 /* ----- Visual metronome ----- */
 /* Self-animates from the shared epoch clock so it stays locked to the
    audio click without prop churn re-rendering its parent. */
-function Metronome({ playing, anchor, bpm, beatsPerBar = 4, style = 'pulse', size = 280 }) {
+function Metronome({ playing, anchor, bpm, beatsPerBar = 4, style = 'pulse', size = 280, onBpm }) {
   const ringRef = useRef(null);
   const dotsRef = useRef(null);
   const glowRef = useRef(null);
   const rafRef = useRef(0);
   const lastBeat = useRef(-1);
+  const [editBpm, setEditBpm] = useState(false);
+  const [bpmDraft, setBpmDraft] = useState('');
+  const commitBpm = () => { const n = parseInt(bpmDraft, 10); if (!isNaN(n) && onBpm) onBpm(Math.max(20, Math.min(300, n))); setEditBpm(false); };
 
   useEffect(() => {
     const dots = dotsRef.current ? Array.from(dotsRef.current.children) : [];
@@ -81,7 +66,7 @@ function Metronome({ playing, anchor, bpm, beatsPerBar = 4, style = 'pulse', siz
       const beatMs = 60000 / (bpm || 120);
       let env = 0, beatInBar = 0;
       if (playing) {
-        const elapsed = (window.WIClock ? window.WIClock.now() : Date.now()) - anchor;
+        const elapsed = Date.now() - anchor;
         const beatFloat = elapsed / beatMs;
         const beatIndex = Math.floor(beatFloat);
         const phase = beatFloat - beatIndex;
@@ -138,7 +123,22 @@ function Metronome({ playing, anchor, bpm, beatsPerBar = 4, style = 'pulse', siz
           border: '1px solid var(--border)',
         }} />
         <div style={{ textAlign: 'center', zIndex: 1 }}>
-          <AnimatedBpm value={bpm} className="mono" style={{ fontSize: size * 0.3, fontWeight: 700, lineHeight: 1, color: 'var(--fg-1)' }} />
+          {onBpm && editBpm ? (
+            <input className="mono" autoFocus value={bpmDraft} inputMode="numeric"
+              onChange={(e) => setBpmDraft(e.target.value.replace(/[^0-9]/g, ''))}
+              onFocus={(e) => e.target.select()}
+              onBlur={commitBpm}
+              onKeyDown={(e) => { if (e.key === 'Enter') commitBpm(); else if (e.key === 'Escape') setEditBpm(false); }}
+              style={{ width: size * 0.64, fontSize: size * 0.3, fontWeight: 700, lineHeight: 1, color: 'var(--fg-1)', background: 'transparent', border: 0, outline: 'none', textAlign: 'center', padding: 0, fontFamily: 'var(--font-mono)' }} />
+          ) : (
+            <div className="mono" onClick={onBpm ? () => { setBpmDraft(String(bpm || 120)); setEditBpm(true); } : undefined}
+              title={onBpm ? 'Click to type a BPM' : undefined}
+              style={{ fontSize: size * 0.3, fontWeight: 700, lineHeight: 1, color: 'var(--fg-1)', cursor: onBpm ? 'text' : 'default', borderRadius: 8, transition: 'background 0.15s' }}
+              onMouseEnter={onBpm ? (e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; } : undefined}
+              onMouseLeave={onBpm ? (e) => { e.currentTarget.style.background = 'transparent'; } : undefined}>
+              {bpm || '—'}
+          </div>
+          )}
           <div className="overline" style={{ marginTop: 6 }}>BPM</div>
         </div>
       </div>
@@ -177,35 +177,48 @@ function CopyButton({ text, label = 'Copy', className = 'btn' }) {
   );
 }
 
-/* ----- Count-in overlay (one-bar lead-in countdown) ----- */
-function CountInOverlay({ active, anchor, bpm, beatsPerBar, onDone }) {
-  const [num, setNum] = useState(beatsPerBar);
+/* ----- Count-in overlay (N-bar lead-in countdown to the downbeat) ----- */
+function CountInOverlay({ active, anchor, bpm, beatsPerBar, bars = 1, onDone }) {
+  const total = beatsPerBar * (bars || 1);
+  const [num, setNum] = useState(total);
   const ref = useRef(0);
   useEffect(() => {
     if (!active) return;
     const beatMs = 60000 / (bpm || 120);
     const loop = () => {
       ref.current = requestAnimationFrame(loop);
-      const beatIndex = Math.floor((Date.now() - anchor) / beatMs);
-      if (beatIndex >= beatsPerBar) { onDone && onDone(); return; }
-      setNum(beatsPerBar - (((beatIndex % beatsPerBar) + beatsPerBar) % beatsPerBar));
+      const remainMs = anchor - Date.now();
+      if (remainMs <= 0) { onDone && onDone(); return; }
+      const beatsLeft = Math.min(total, Math.ceil(remainMs / beatMs));
+      setNum(beatsLeft);
     };
     loop();
     return () => cancelAnimationFrame(ref.current);
-  }, [active, anchor, bpm, beatsPerBar]);
+  }, [active, anchor, bpm, beatsPerBar, bars]);
   if (!active) return null;
+  // which beat-in-bar are we on, for the dot row
+  const beatInBar = ((num - 1) % beatsPerBar);
   return (
     <div style={{
       position: 'absolute', inset: 0, display: 'grid', placeItems: 'center',
-      background: 'radial-gradient(circle, color-mix(in oklab, var(--bg) 80%, transparent) 40%, color-mix(in oklab, var(--bg) 45%, transparent) 100%)',
+      background: 'radial-gradient(circle, color-mix(in oklab, var(--bg) 86%, transparent) 42%, color-mix(in oklab, var(--bg) 52%, transparent) 100%)',
       borderRadius: '50%', zIndex: 4,
     }}>
       <div style={{ textAlign: 'center' }}>
-        <div className="overline" style={{ color: 'var(--accent)' }}>Count-in</div>
+        <div className="overline" style={{ color: 'var(--accent)' }}>Count-in{bars > 1 ? ' · ' + bars + ' bars' : ''}</div>
         <div className="mono" style={{ fontSize: 96, fontWeight: 700, lineHeight: 1, color: 'var(--fg-1)' }}>{num}</div>
+        <div style={{ display: 'flex', gap: 9, justifyContent: 'center', marginTop: 14 }}>
+          {Array.from({ length: beatsPerBar }).map((_, i) => (
+            <span key={i} style={{
+              width: 10, height: 10, borderRadius: '50%',
+              background: i === ((beatsPerBar - 1) - beatInBar) ? 'var(--accent)' : 'var(--surface-3)',
+              transition: 'background 80ms linear',
+            }} />
+          ))}
+        </div>
       </div>
     </div>
   );
 }
 
-Object.assign(window, { TopBar, ThemeToggle, useTheme, AnimatedBpm, Metronome, MixSlider, CopyButton, CountInOverlay, INSTRUMENTS, instIcon, TS_LABEL, SUBDIV_LABEL });
+Object.assign(window, { TopBar, ThemeToggle, useTheme, Metronome, MixSlider, CopyButton, CountInOverlay, INSTRUMENTS, instIcon, TS_LABEL, SUBDIV_LABEL });

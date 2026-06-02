@@ -1,22 +1,11 @@
 /* WorshipIEM — Landing (light editorial, Basis-style hero) */
-const { useState: lpS, useRef: lpR } = React;
+const { useState: lpS } = React;
 
 function Landing({ go }) {
-  const rootRef = lpR(null);
-
-  // GSAP entrance animation
-  React.useEffect(() => {
-    if (typeof gsap === 'undefined') return;
-    const ctx = gsap.context(() => {
-      const tl = gsap.timeline({ defaults: { ease: 'power3.out', clearProps: 'transform,opacity' } });
-      tl.from('.lp-rise', { y: 18, opacity: 0, duration: 0.55, stagger: 0.07 })
-        .from('.lp-phone-wrap', { y: 50, opacity: 0, duration: 0.85, ease: 'power4.out' }, 0.12);
-    });
-    return () => ctx.revert();
-  }, []);
-
+  const account = useAuth();
+  const [authOpen, setAuthOpen] = lpS(false);
   return (
-    <div ref={rootRef} style={{ position: 'relative', minHeight: '100dvh', background: '#f5f4ed', color: '#141413', overflow: 'hidden', fontFamily: 'var(--font-sans)' }}>
+    <div style={{ position: 'relative', minHeight: '100dvh', background: '#f5f4ed', color: '#141413', overflow: 'hidden', fontFamily: 'var(--font-sans)' }}>
       <style>{`
         @keyframes lpIem { 0%,100%{ transform: translateY(0) rotate(-3deg); } 50%{ transform: translateY(-26px) rotate(1deg); } }
         @keyframes lpIem2 { 0%,100%{ transform: translateY(0) rotate(6deg); } 50%{ transform: translateY(20px) rotate(2deg); } }
@@ -25,6 +14,8 @@ function Landing({ go }) {
         @keyframes lpWave { 0%,100%{ transform: scaleY(.28);} 50%{ transform: scaleY(1);} }
         @keyframes lpBlink { 50%{ opacity:.25; } }
         @keyframes lpFloat { 0%,100%{ transform: translateY(0);} 50%{ transform: translateY(-8px);} }
+        @keyframes lpRise { from{ transform: translateY(14px);} to{ transform:none;} }
+        .lp-rise { animation: lpRise .7s cubic-bezier(.32,.72,0,1) both; }
         .lp-link { color:#5e5d59; font-size:15px; font-weight:500; text-decoration:none; cursor:pointer; transition: color .2s; }
         .lp-link:hover { color:#141413; }
         .lp-pill-btn { display:inline-flex; align-items:center; gap:8px; height:42px; padding:0 18px; border-radius:24px; font-size:15px; font-weight:600; font-family:var(--font-sans); cursor:pointer; border:1px solid #141413; background:#141413; color:#faf9f5; transition: background .24s cubic-bezier(.32,.72,0,1); }
@@ -61,9 +52,13 @@ function Landing({ go }) {
           <a className="lp-link" onClick={(e) => e.preventDefault()}>For bands</a>
           <a className="lp-link" onClick={(e) => e.preventDefault()}>FAQ</a>
           <a className="lp-link" onClick={() => go('#/join')}>Join a session</a>
+          {account
+            ? <a className="lp-link" onClick={() => window.WIAuth.logout()} title="Sign out" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><WIcon name="user" size={15} /> {account}</a>
+            : <a className="lp-link" onClick={() => setAuthOpen(true)}>Sign in</a>}
           <button className="lp-pill-btn" onClick={() => go('#/create')}>Host a session</button>
         </div>
       </nav>
+      {authOpen && <AuthModal onClose={() => setAuthOpen(false)} />}
 
       {/* hero */}
       <div className="lp-grid" style={{ position: 'relative', zIndex: 3, maxWidth: 1180, margin: '0 auto', padding: '36px 28px 80px', display: 'grid', gridTemplateColumns: '1.05fr 1fr', gap: 40, alignItems: 'center' }}>
@@ -96,7 +91,7 @@ function Landing({ go }) {
         </div>
 
         {/* right — phone */}
-        <div className="lp-phone-col lp-phone-wrap" style={{ display: 'flex', justifyContent: 'center', paddingRight: 8 }}>
+        <div className="lp-phone-col" style={{ display: 'flex', justifyContent: 'center', paddingRight: 8 }}>
           <PhoneMock />
         </div>
       </div>

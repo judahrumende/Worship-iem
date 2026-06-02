@@ -7,18 +7,10 @@ function HostControl({ room, go }) {
   if (!session) {
     return (
       <div className="screen"><TopBar />
-        <div className="wrap fade-in" style={{ paddingTop: 80, textAlign: 'center', maxWidth: 420, margin: '0 auto' }}>
-          <h2 className="serif" style={{ fontSize: 30 }}>Are you a musician?</h2>
-          <p className="muted" style={{ margin: '10px 0 8px' }}>
-            Room <span className="mono" style={{ fontWeight: 700 }}>{room}</span> has no host session on this device.
-          </p>
-          <p className="muted" style={{ margin: '0 0 28px' }}>
-            If your worship leader sent you this link, tap <strong>Join as listener</strong> below.
-          </p>
-          <button className="btn btn--primary btn--lg btn--block" style={{ marginBottom: 12 }} onClick={() => go('#/listen?room=' + room)}>
-            Join as listener
-          </button>
-          <button className="btn btn--ghost btn--block" onClick={() => go('#/create')}>I'm the host — start a new session</button>
+        <div className="wrap fade-in" style={{ paddingTop: 80, textAlign: 'center' }}>
+          <h2 className="serif" style={{ fontSize: 30 }}>Session not found</h2>
+          <p className="muted" style={{ margin: '10px 0 24px' }}>This room has no setlist on this device.</p>
+          <button className="btn btn--primary btn--lg" onClick={() => go('#/create')}>Start a new session</button>
         </div>
       </div>
     );
@@ -32,11 +24,11 @@ function HostControl({ room, go }) {
   const [bpb, setBpb] = uS(session.setlist[0]?.bpb || 4);
   const [clickVol, setClickVol] = uS(80);
   const [micVol, setMicVol] = uS(75);
-  const [countInBars, setCountInBars] = uS(0);  // 0=off, 1=1-bar, 2=2-bar
+  const [countInBars, setCountInBars] = uS(0);   // 0 = off, 1 or 2 bars
   const [counting, setCounting] = uS(false);
-  const [timbre, setTimbre] = uS('wood');
-  const [subdivision, setSubdivision] = uS('none');
-  const [accent, setAccent] = uS(true);
+  const [timbre, setTimbre] = uS(session.setlist[0]?.clickSound || 'wood');
+  const [subdivision, setSubdivision] = uS(session.setlist[0]?.subdivision || 'none');
+  const [accent, setAccent] = uS(session.setlist[0]?.accent !== false);
   const [rampOn, setRampOn] = uS(false);
   const [rampStart, setRampStart] = uS(60);
   const [micOn, setMicOn] = uS(false);
@@ -44,6 +36,7 @@ function HostControl({ room, go }) {
   const [micLabel, setMicLabel] = uS('');
   const [micErr, setMicErr] = uS('');
   const [pttMode, setPttMode] = uS('open');   // open | ptt
+  const [talkTargets, setTalkTargets] = uS([]);   // [] = whole band; else player ids
   const [holding, setHolding] = uS(false);
   const [ready, setReady] = uS(false);
   const [players, setPlayers] = uS({});
@@ -51,7 +44,13 @@ function HostControl({ room, go }) {
   const [tab, setTab] = uS('setlist');         // setlist | players
   const [advanced, setAdvanced] = uS(false);
   const [activeCueId, setActiveCueId] = uS(null);
-  const [talkTargets, setTalkTargets] = uS([]);
+  const [songModal, setSongModal] = uS(null);  // {mode:'add'} | {mode:'edit', song} | 'import' | 'saved' | 'library'
+  const [savedOk, setSavedOk] = uS('');         // toast text
+  const [showDaw, setShowDaw] = uS(false);      // fullscreen Live DAW overlay
+  const [authOpen, setAuthOpen] = uS(false);
+  const account = useAuth();
+  const pendingSave = uR(null);
+  const flash = (m) => { setSavedOk(m); clearTimeout(flash._t); flash._t = setTimeout(() => setSavedOk(''), 1700); };
 
   const tx = uR(null);
   const tapTimes = uR([]);
@@ -60,13 +59,8 @@ function HostControl({ room, go }) {
   const dragFrom = uR(null);
   // live refs for async (ramp / ptt)
   const aRef = uR(anchor), bRef = uR(bpm), pRef = uR(playing), bpbRef = uR(bpb);
-  const pttRef = uR(pttMode), holdRef = uR(holding), micVolRef = uR(micVol);
-  // ref for players so toggleMic closure can read current value
-  const playersRef = uR({});
-  const broadcastRef = uR(null);
-  const targetsRef = uR([]);
+  const pttRef = uR(pttMode), holdRef = uR(holding), micVolRef = uR(micVol), targetsRef = uR(talkTargets);
   uE(() => { aRef.current = anchor; bRef.current = bpm; pRef.current = playing; bpbRef.current = bpb; pttRef.current = pttMode; holdRef.current = holding; micVolRef.current = micVol; targetsRef.current = talkTargets; });
-  uE(() => { playersRef.current = players; }, [players]);
 
   const activeSong = setlist.find(s => s.id === activeId);
 
@@ -92,15 +86,14 @@ function HostControl({ room, go }) {
         if (!p || p.password !== session.password) { t.send('denied', { to: p && p.id, id: p && p.id }); return; }
         t.send('granted', { to: p.id, id: p.id });
       }
-      see(p); broadcastRef.current && broadcastRef.current();
+      see(p); broadcast();
       if (window.WIMic.active) window.WIMic.addListener(p.id);
     });
     t.on('ping', see);
     t.on('bye', (p) => {
-      if (p && p.id) {
-        setPlayers(prev => { const c = { ...prev }; delete c[p.id]; return c; });
-        window.WIMic.removeListener(p.id);
-      }
+      if (!p) return;
+      window.WIMic.removeListener(p.id);
+      setPlayers(prev => { const c = { ...prev }; delete c[p.id]; return c; });
     });
     t.on('talkreq', (p) => p && p.id && setTalkers(prev => ({ ...prev, [p.id]: { name: p.name || 'Musician', level: p.level || 0, t: Date.now() } })));
     const prune = setInterval(() => {
@@ -111,19 +104,16 @@ function HostControl({ room, go }) {
     return () => { clearInterval(prune); t.close(); };
   }, [room]);
 
-  const wiNow = () => window.WIClock ? window.WIClock.now() : Date.now();
-  const leadMs = (tempo, beats) => countInBars > 0 ? countInBars * beats * (60000 / tempo) : 0;
   const stateObj = () => {
     const s = setlist.find(x => x.id === activeId);
     const cue = s && s.cues && s.cues.find(c => c.id === activeCueId);
     return {
       sessionName: session.name, needsPassword: !!session.password, setlist, activeId, playing, anchor, bpm, bpb,
-      clickVol, micVol, micOn, timbre, subdivision, accent, pttMode, countInBars,
+      clickVol, micVol, micOn, timbre, subdivision, accent, pttMode, countInBars, talkTargets,
       activeCue: cue ? cue.name : null, ts: Date.now(),
     };
   };
   const broadcast = () => { if (tx.current) tx.current.send('state', stateObj()); };
-  broadcastRef.current = broadcast;
 
   uE(() => { window.WIClick.setTransport({ playing, anchor, bpm, beatsPerBar: bpb }); }, [playing, anchor, bpm, bpb, ready]);
   uE(() => { window.WIClick.setVolume(clickVol / 100); }, [clickVol]);
@@ -131,21 +121,25 @@ function HostControl({ room, go }) {
   uE(() => { window.WIClick.setSubdivision(subdivision); }, [subdivision]);
   uE(() => { window.WIClick.setAccent(accent); }, [accent]);
   uE(() => { broadcast(); window.WISnap.save(room, stateObj()); },
-    [activeId, playing, anchor, bpm, bpb, clickVol, micVol, micOn, timbre, subdivision, accent, pttMode, setlist, activeCueId, countInBars]);
+    [activeId, playing, anchor, bpm, bpb, clickVol, micVol, micOn, timbre, subdivision, accent, pttMode, setlist, activeCueId, countInBars, talkTargets]);
 
-  /* ---- PTT state effect — enable/disable mic tracks ---- */
-  uE(() => {
-    if (window.WIMic.active) {
-      window.WIMic.setPttEnabled(pttMode !== 'ptt' || holding);
-    }
-  }, [pttMode, holding, micOn]);
+  /* persist setlist edits to localStorage so nothing resets on reload */
+  uE(() => { window.WISession.save(room, { ...session, setlist }); }, [setlist]);
+
+  /* PTT gate — enable/disable mic tracks */
+  uE(() => { if (window.WIMic.active) window.WIMic.setPttEnabled(pttMode !== 'ptt' || holding); }, [pttMode, holding, micOn]);
+
+  /* drop talkback targets for musicians who have left */
+  uE(() => { setTalkTargets(t => { const f = t.filter(id => players[id]); return f.length === t.length ? t : f; }); }, [players]);
+
+  /* ---- clock helper (uses server-synced offset when available) ---- */
+  const wiNow = () => window.WIClock ? window.WIClock.now() : Date.now();
 
   /* ---- tempo helpers (phase-preserving) ---- */
   const reanchorFor = (newBpm) => {
-    const now = wiNow();
     const oldBeatMs = 60000 / bRef.current;
-    const idx = (now - aRef.current) / oldBeatMs;
-    return now - idx * (60000 / newBpm);
+    const idx = (wiNow() - aRef.current) / oldBeatMs;
+    return wiNow() - idx * (60000 / newBpm);
   };
   const setTempo = (nb) => {
     nb = Math.min(300, Math.max(20, Math.round(nb)));
@@ -154,6 +148,7 @@ function HostControl({ room, go }) {
   };
 
   /* ---- transport actions ---- */
+  const leadMs = (tempo, beats) => (countInBars > 0 ? countInBars * beats * (60000 / tempo) : 0);
   const start = async () => {
     await ensureAudio();
     const target = activeSong ? activeSong.bpm : bpm;
@@ -161,19 +156,21 @@ function HostControl({ room, go }) {
     if (rampOn) {
       const s0 = Math.min(rampStart, target);
       setBpm(s0); bRef.current = s0;
-      const a = wiNow(); setAnchor(a); aRef.current = a; setPlaying(true);
-      const t0 = wiNow(), dur = 12000;
+      const a = wiNow() + leadMs(s0, bpb); setAnchor(a); aRef.current = a; setPlaying(true);
+      if (countInBars > 0) setCounting(true);
+      const t0 = a, dur = 12000;
       rampTimer.current = setInterval(() => {
-        const k = Math.min(1, (wiNow() - t0) / dur);
-        const nb = Math.round(s0 + (target - s0) * k);
+        const k = (wiNow() - t0) / dur;
+        if (k < 0) return;            // still counting in
+        const kk = Math.min(1, k);
+        const nb = Math.round(s0 + (target - s0) * kk);
         const na = reanchorFor(nb);
         setAnchor(na); aRef.current = na; setBpm(nb); bRef.current = nb;
-        if (k >= 1) { clearInterval(rampTimer.current); }
+        if (kk >= 1) { clearInterval(rampTimer.current); }
       }, 180);
     } else {
-      setBpm(target);
-      const a = wiNow() + leadMs(target, bpb);
-      setAnchor(a); aRef.current = a; setPlaying(true);
+      setBpm(target); bRef.current = target;
+      const a = wiNow() + leadMs(target, bpb); setAnchor(a); setPlaying(true);
       if (countInBars > 0) setCounting(true);
     }
   };
@@ -184,7 +181,8 @@ function HostControl({ room, go }) {
     const s = setlist.find(x => x.id === id); if (!s) return;
     clearInterval(rampTimer.current);
     setActiveId(id); setActiveCueId(null); setBpm(s.bpm); setBpb(s.bpb);
-    if (pRef.current) { const a = wiNow() + leadMs(s.bpm, s.bpb); setAnchor(a); aRef.current = a; if (countInBars > 0) setCounting(true); }
+    setTimbre(s.clickSound || 'wood'); setSubdivision(s.subdivision || 'none'); setAccent(s.accent !== false);
+    if (pRef.current) { const a = wiNow() + leadMs(s.bpm, s.bpb); setAnchor(a); if (countInBars > 0) setCounting(true); }
   };
   const nextSong = () => {
     const i = setlist.findIndex(s => s.id === activeId);
@@ -194,6 +192,78 @@ function HostControl({ room, go }) {
     if (from == null || from === to) return;
     setSetlist(s => { const c = s.slice(); const [m] = c.splice(from, 1); c.splice(to, 0, m); return c; });
   };
+
+  /* ---- inline setlist editing (no more separate setup page) ---- */
+  const addSong = (data) => {
+    const s = window.WINormalizeSong({ ...data, id: uid() });
+    setSetlist(l => [...l, s]);
+    setActiveId(prev => prev || s.id);
+    return s.id;
+  };
+  const updateSong = (id, patch) => setSetlist(l => l.map(x => x.id === id ? { ...x, ...patch } : x));
+  const removeSong = (id) => {
+    const n = setlist.filter(x => x.id !== id);
+    setSetlist(n);
+    if (activeId === id) {
+      clearInterval(rampTimer.current);
+      const nx = n[0];
+      setActiveId(nx ? nx.id : null); setActiveCueId(null);
+      if (nx) { setBpm(nx.bpm); setBpb(nx.bpb); } else { setPlaying(false); }
+    }
+  };
+  const replaceSetlist = (songs) => {
+    const mapped = songs.map(s => window.WINormalizeSong({ ...s, id: uid() }));
+    clearInterval(rampTimer.current); setPlaying(false); setActiveCueId(null);
+    setSetlist(mapped); setActiveId(mapped[0] ? mapped[0].id : null);
+    if (mapped[0]) { setBpm(mapped[0].bpm); setBpb(mapped[0].bpb); }
+  };
+  const saveSetlist = () => {
+    const clean = setlist.filter(s => (s.name || '').trim());
+    if (!clean.length) return;
+    window.WISetlistStore.save(session.name || 'Setlist', clean.map(s => ({ name: s.name, key: s.key, bpm: s.bpm, bpb: s.bpb, notes: s.notes })));
+    flash('Setlist saved for reuse');
+  };
+
+  /* ---- per-song click settings: write to the song AND keep the engine in sync ---- */
+  const setClick = (id, patch) => {
+    updateSong(id, patch);
+    if (id !== activeId) return;
+    if ('clickSound' in patch) { setTimbre(patch.clickSound); window.WIClick.setTimbre(patch.clickSound); }
+    if ('subdivision' in patch) setSubdivision(patch.subdivision);
+    if ('accent' in patch) setAccent(patch.accent);
+    if ('bpb' in patch) { setBpb(patch.bpb); if (pRef.current) setAnchor(wiNow()); }
+  };
+
+  /* ---- library ---- */
+  const doSaveToLibrary = (song) => {
+    const item = window.WILibrary.add(window.WINormalizeSong(song));
+    if (item) flash('Saved “' + (song.name || 'song') + '” to your library');
+  };
+  const saveSongToLibrary = (song) => {
+    if (!window.WIAuth.current()) { pendingSave.current = song; setAuthOpen(true); return; }
+    doSaveToLibrary(song);
+  };
+  const addFromLibrary = (libSong) => { const id = addSong(libSong); setActiveId(id); };
+
+  /* ---- keyboard shortcuts: 1–9 (0 = 10th) jump to a song, Space starts/stops ---- */
+  uE(() => {
+    const onKey = (e) => {
+      if (songModal) return;
+      const el = e.target;
+      const tag = (el && el.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'select' || tag === 'textarea' || (el && el.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (/^[0-9]$/.test(e.key)) {
+        const idx = e.key === '0' ? 9 : (parseInt(e.key, 10) - 1);
+        if (setlist[idx]) { e.preventDefault(); activate(setlist[idx].id); }
+      } else if (e.code === 'Space' && tag !== 'button') {
+        e.preventDefault();
+        pRef.current ? stop() : start();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setlist, songModal, activeId, playing, bpm, bpb, countInBars, rampOn, rampStart]);
 
   /* ---- cues (Ableton-style, saved per song) ---- */
   const DEFAULT_CUES = (song) => ['Intro', 'Verse', 'Chorus', 'Bridge', 'Outro'].map((n, i) => ({ id: uid(), name: n, bpm: song.bpm, bars: i === 0 ? 4 : 8, bpb: song.bpb, note: '' }));
@@ -208,8 +278,7 @@ function HostControl({ room, go }) {
     clearInterval(rampTimer.current);
     setActiveCueId(cue.id);
     setBpb(cue.bpb || bpb); setBpm(cue.bpm || bpm);
-    const cueAnchor = wiNow() + leadMs(cue.bpm || bpm, cue.bpb || bpb);
-    setAnchor(cueAnchor); aRef.current = cueAnchor; setPlaying(true);
+    setAnchor(wiNow() + leadMs(cue.bpm || bpm, cue.bpb || bpb)); setPlaying(true);
     if (countInBars > 0) setCounting(true);
   };
 
@@ -232,7 +301,7 @@ function HostControl({ room, go }) {
     try {
       const label = await window.WIMic.connect();
       setMicLabel(label); setMicOn(true);
-      Object.keys(playersRef.current).forEach(pid => window.WIMic.addListener(pid));
+      Object.keys(players).forEach(id => window.WIMic.addListener(id));
       window.WIMic.onLevel = (lv) => {
         setMicLevel(lv);
         const now = Date.now();
@@ -246,13 +315,6 @@ function HostControl({ room, go }) {
   };
   uE(() => () => { window.WIMic.disconnect(); clearInterval(rampTimer.current); }, []);
 
-  uE(() => {
-    setTalkTargets(t => {
-      const f = t.filter(id => players[id]);
-      return f.length === t.length ? t : f;
-    });
-  }, [players]);
-
   const pcount = Object.keys(players).length;
   const readyCount = Object.values(players).filter(p => p.ready).length;
   const talkerList = Object.values(talkers).filter(t => t.level > 0.04);
@@ -261,6 +323,9 @@ function HostControl({ room, go }) {
     <div className="screen">
       <TopBar live sub={'· ' + session.name} right={
         <>
+          {account
+            ? <button className="chip" onClick={() => window.WIAuth.logout()} title="Sign out" style={{ cursor: 'pointer' }}><WIcon name="user" size={14} /> {account}</button>
+            : <button className="chip" onClick={() => setAuthOpen(true)} style={{ cursor: 'pointer' }}><WIcon name="user" size={14} /> Sign in</button>}
           <button className="chip" onClick={() => setTab('players')} style={{ cursor: 'pointer' }}><WIcon name="users" size={15} /> {pcount}</button>
           <button className="btn btn--ghost btn--icon" onClick={() => go('#/')} title="Leave"><WIcon name="x" size={18} /></button>
         </>
@@ -291,8 +356,8 @@ function HostControl({ room, go }) {
         {/* LEFT — now playing + metronome + transport + click options */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           <div className="card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20, paddingTop: 26, paddingBottom: 26, position: 'relative' }}>
-            <button className="btn btn--ghost" style={{ position: 'absolute', top: 14, right: 14, height: 34, fontSize: 13.5 }} onClick={() => advanced ? setAdvanced(false) : goAdvanced()} disabled={!activeSong}>
-              {advanced ? <><WIcon name="chevronLeft" size={15} /> Simple</> : <><WIcon name="grip" size={15} /> Advanced</>}
+            <button className="btn btn--ghost" style={{ position: 'absolute', top: 14, right: 14, height: 34, fontSize: 13.5 }} onClick={() => setShowDaw(true)} disabled={!activeSong}>
+              <WIcon name="grip" size={15} /> Live DAW
             </button>
             <div style={{ textAlign: 'center', width: '100%' }}>
               <div className="overline" style={{ color: playing ? 'var(--accent)' : 'var(--fg-3)' }}>{playing ? 'Click live' : 'Now playing'}</div>
@@ -309,7 +374,7 @@ function HostControl({ room, go }) {
             {!advanced ? (
               <>
                 <div style={{ position: 'relative' }}>
-                  <Metronome playing={playing} anchor={anchor} bpm={bpm} beatsPerBar={bpb} size={252} />
+                  <Metronome playing={playing} anchor={anchor} bpm={bpm} beatsPerBar={bpb} size={252} onBpm={setTempo} />
                   <CountInOverlay active={counting && playing} anchor={anchor} bpm={bpm} beatsPerBar={bpb} bars={countInBars || 1} onDone={() => setCounting(false)} />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -330,22 +395,25 @@ function HostControl({ room, go }) {
             <div style={{ display: 'flex', gap: 10, width: '100%' }}>
               <button className="btn" style={{ flex: 1 }} onClick={tap}><WIcon name="hand" size={20} /> Tap tempo</button>
               <button className="btn" style={{ flex: 1, ...(countInBars > 0 ? activeBtn : {}) }} onClick={() => setCountInBars(v => (v + 1) % 3)}>
-                <WIcon name="metronome" size={18} /> {countInBars === 0 ? 'Count-in' : countInBars === 1 ? '1-bar count-in' : '2-bar count-in'}
+                <WIcon name="metronome" size={18} /> {countInBars === 0 ? 'Count-in' : 'Count-in · ' + countInBars + ' bar' + (countInBars > 1 ? 's' : '')}
               </button>
             </div>
+            <p className="dim" style={{ fontSize: 12, margin: 0, textAlign: 'center' }}>
+              Keyboard: press <span className="kbd">1</span>–<span className="kbd">9</span> (<span className="kbd">0</span> = 10th) to jump to a song · <span className="kbd">Space</span> starts &amp; stops
+            </p>
           </div>
 
           {/* click options */}
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             <span className="overline"><WIcon name="metronome" size={13} style={{ verticalAlign: -2, marginRight: 6 }} />Click options</span>
-            <Segmented label="Time signature" value={String(bpb)} onChange={(v) => { setBpb(+v); if (pRef.current) setAnchor(wiNow()); }}
+            <Segmented label="Time signature" value={String(bpb)} onChange={(v) => setClick(activeId, { bpb: +v })}
               options={[['4', '4/4'], ['3', '3/4'], ['6', '6/8'], ['2', '2/4']]} />
-            <Segmented label="Subdivision" value={subdivision} onChange={setSubdivision}
+            <Segmented label="Subdivision" value={subdivision} onChange={(v) => setClick(activeId, { subdivision: v })}
               options={[['none', 'Quarter'], ['8', '8ths'], ['triplet', 'Triplet'], ['16', '16ths']]} />
-            <Segmented label="Sound" value={timbre} onChange={(v) => { setTimbre(v); window.WIClick.setTimbre(v); window.WIClick.tick(true); }}
+            <Segmented label="Sound" value={timbre} onChange={(v) => { setClick(activeId, { clickSound: v }); window.WIClick.setTimbre(v); window.WIClick.tick(true); }}
               options={[['wood', 'Wood'], ['beep', 'Beep'], ['hihat', 'Hat'], ['cowbell', 'Bell']]} />
             <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn" style={{ flex: 1, ...(accent ? activeBtn : {}) }} onClick={() => setAccent(a => !a)}>Accent beat 1</button>
+              <button className="btn" style={{ flex: 1, ...(accent ? activeBtn : {}) }} onClick={() => setClick(activeId, { accent: !accent })}>Accent beat 1</button>
               <button className="btn" style={{ flex: 1, ...(rampOn ? activeBtn : {}) }} onClick={() => setRampOn(r => !r)}>Ramp-up</button>
             </div>
             {rampOn && (
@@ -370,28 +438,51 @@ function HostControl({ room, go }) {
 
             {tab === 'setlist' ? (
               <div>
-                {setlist.map((s, i) => {
+                <div style={{ display: 'flex', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button className="btn btn--primary" style={{ height: 36, fontSize: 14 }} onClick={() => setSongModal({ mode: 'add' })}><WIcon name="plus" size={16} /> Add song</button>
+                  <button className="btn" style={{ height: 36, fontSize: 14 }} onClick={() => setSongModal('library')}><WIcon name="bookmark" size={15} /> From library</button>
+                  <button className="btn" style={{ height: 36, fontSize: 14 }} onClick={() => setSongModal('import')}><WIcon name="upload" size={15} /> Import</button>
+                  <button className="btn btn--ghost" style={{ height: 36, fontSize: 14, marginLeft: 'auto' }} onClick={saveSetlist} disabled={!setlist.length}><WIcon name="check" size={15} /> Save</button>
+                </div>
+                {setlist.length === 0 ? (
+                  <p className="muted" style={{ fontSize: 14, padding: '20px 16px', lineHeight: 1.6 }}>
+                    No songs yet. Tap <strong>Add song</strong> to build the setlist right here — keys, tempo and notes push live to everyone's in-ears the moment you add them.
+                  </p>
+                ) : setlist.map((s, i) => {
                   const on = s.id === activeId;
+                  const hotkey = i < 9 ? String(i + 1) : (i === 9 ? '0' : null);
                   return (
                     <div key={s.id} draggable
                       onDragStart={() => { dragFrom.current = i; }}
                       onDragOver={(e) => e.preventDefault()}
                       onDrop={() => { reorder(dragFrom.current, i); dragFrom.current = null; }}
                       onClick={() => activate(s.id)}
+                      className="song-row"
                       style={{
-                        display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px', cursor: 'pointer',
                         background: on ? 'var(--accent-soft)' : 'transparent', borderTop: '1px solid var(--border)',
                         borderLeft: '3px solid ' + (on ? 'var(--accent)' : 'transparent'), transition: 'background 180ms var(--ease)',
                       }}>
                       <span style={{ color: 'var(--fg-3)', cursor: 'grab', display: 'flex' }} onClick={e => e.stopPropagation()}><WIcon name="grip2" size={16} /></span>
-                      <span className="mono" style={{ width: 18, color: on ? 'var(--accent)' : 'var(--fg-3)', fontWeight: 700 }}>{i + 1}</span>
+                      <span className="mono" title={hotkey ? 'Press ' + hotkey : null} style={{
+                        width: 26, height: 26, flex: 'none', display: 'grid', placeItems: 'center', borderRadius: 6,
+                        fontSize: 13, fontWeight: 700,
+                        border: '1px solid ' + (on ? 'var(--accent)' : 'var(--border-2)'),
+                        background: on ? 'var(--accent-soft)' : 'var(--surface-2)',
+                        color: on ? 'var(--accent)' : 'var(--fg-3)',
+                        boxShadow: hotkey ? 'inset 0 -2px 0 rgba(0,0,0,0.18)' : 'none',
+                      }}>{hotkey || (i + 1)}</span>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: on ? 600 : 500, fontSize: 16, color: on ? 'var(--fg-1)' : 'var(--fg-2)' }}>{s.name}</div>
+                        <div style={{ fontWeight: on ? 600 : 500, fontSize: 16, color: on ? 'var(--fg-1)' : 'var(--fg-2)' }}>{s.name || <span className="dim">Untitled song</span>}</div>
                         {s.notes && <div className="dim" style={{ fontSize: 12, marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.notes}</div>}
                       </div>
                       {on && playing && <span className="chip chip--live" style={{ height: 24 }}><span className="dot" />live</span>}
                       {s.key && <span className="mono dim" style={{ fontSize: 13, fontWeight: 600 }}>{s.key}</span>}
                       <span className="mono" style={{ fontSize: 15, fontWeight: 700, color: on ? 'var(--fg-1)' : 'var(--fg-3)' }}>{s.bpm}</span>
+                      <div className="song-row__actions" style={{ display: 'flex', gap: 2 }}>
+                        <button className="btn btn--ghost btn--icon" style={{ height: 32, width: 32 }} title="Edit song" onClick={e => { e.stopPropagation(); setSongModal({ mode: 'edit', song: s }); }}><WIcon name="pencil" size={15} /></button>
+                        <button className="btn btn--ghost btn--icon btn--danger" style={{ height: 32, width: 32 }} title="Remove song" onClick={e => { e.stopPropagation(); removeSong(s.id); }}><WIcon name="trash" size={15} /></button>
+                      </div>
                     </div>
                   );
                 })}
@@ -425,7 +516,7 @@ function HostControl({ room, go }) {
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span className="overline"><WIcon name="mic" size={13} style={{ verticalAlign: -2, marginRight: 6 }} />Talk to the band</span>
-              {micOn && pttMode === 'open' && <span className="chip chip--live" style={{ height: 26 }}><span className="dot" />on air</span>}
+              {micOn && pttMode === 'open' && <span className="chip chip--live" style={{ height: 26 }}><span className="dot" />{talkTargets.length ? 'private · ' + talkTargets.length : 'on air'}</span>}
             </div>
             <div className="meter"><i style={{ width: (micOn && (pttMode === 'open' || holding) ? micLevel * 100 : 0) + '%' }} /></div>
             {!micOn ? (
@@ -437,13 +528,20 @@ function HostControl({ room, go }) {
                   <div>
                     <div className="overline" style={{ marginBottom: 8 }}>Talk to</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      <TalkChip name="Whole band" icon="users" active={talkTargets.length === 0} onClick={() => setTalkTargets([])} />
+                      <TalkChip on={talkTargets.length === 0} icon="users" label="Whole band" onClick={() => setTalkTargets([])} />
                       {Object.entries(players).map(([id, p]) => (
-                        <TalkChip key={id} name={p.name} icon={instIcon(p.instrument)}
-                          active={talkTargets.includes(id)}
-                          onClick={() => setTalkTargets(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id])} />
+                        <TalkChip key={id} on={talkTargets.includes(id)} icon={instIcon(p.instrument)} label={p.name}
+                          onClick={() => setTalkTargets(t => {
+                            const next = t.includes(id) ? t.filter(x => x !== id) : [...t, id];
+                            return next.length >= pcount ? [] : next;
+                          })} />
                       ))}
                     </div>
+                    <p className="dim" style={{ fontSize: 12, margin: '8px 0 0' }}>
+                      {talkTargets.length === 0
+                        ? 'Everyone hears you in their in-ears.'
+                        : 'Private — only ' + talkTargets.map(id => players[id] && players[id].name).filter(Boolean).join(', ') + ' hears you.'}
+                    </p>
                   </div>
                 )}
                 {pttMode === 'ptt' && (
@@ -482,26 +580,86 @@ function HostControl({ room, go }) {
           </div>
         </div>
       </div>
+
+      {showDaw && (
+        <LiveDaw
+          session={session} room={room} setlist={setlist}
+          activeId={activeId} playing={playing} anchor={anchor} bpm={bpm} bpb={bpb} players={players}
+          account={account}
+          onActivate={activate} onToggle={toggle} onReorder={reorder}
+          onAddSong={() => setSongModal({ mode: 'add' })}
+          onAddFromLibrary={() => setSongModal('library')}
+          onEditSong={(s) => setSongModal({ mode: 'edit', song: s })}
+          onRemoveSong={removeSong}
+          onUpdateSong={updateSong}
+          onSetClick={setClick}
+          onSetBpm={(id, n) => { updateSong(id, { bpm: n }); if (id === activeId) setTempo(n); }}
+          onSaveToLibrary={saveSongToLibrary}
+          onSignIn={() => setAuthOpen(true)}
+          micOn={micOn} talking={micOn && holding}
+          onToggleMic={toggleMic}
+          onTalkStart={() => { setPttMode('ptt'); setHolding(true); }}
+          onTalkEnd={() => setHolding(false)}
+          onTempo={setTempo} onTap={tap} onClose={() => setShowDaw(false)}
+        />
+      )}
+
+      {songModal && (songModal.mode === 'add' || songModal.mode === 'edit') && (
+        <SongEditor
+          song={songModal.mode === 'edit' ? songModal.song : null}
+          onClose={() => setSongModal(null)}
+          onSave={(data) => {
+            if (songModal.mode === 'edit') updateSong(songModal.song.id, data);
+            else addSong(data);
+            setSongModal(null);
+          }} />
+      )}
+      {songModal === 'import' && (
+        <window.WIModal title="Import from Planning Center" onClose={() => setSongModal(null)}>
+          <p className="muted" style={{ fontSize: 14, marginBottom: 16 }}>
+            Your connected Planning Center service plan. Importing replaces the current setlist with its songs, keys and tempos.
+          </p>
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontWeight: 600 }}>{window.WIPCPlan.name}</span>
+              <span className="chip"><span className="dot" />{window.WIPCPlan.songs.length} songs</span>
+            </div>
+            {window.WIPCPlan.songs.map((s, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderTop: i ? '1px solid var(--border)' : 0 }}>
+                <span className="mono dim" style={{ width: 18 }}>{i + 1}</span>
+                <span style={{ flex: 1, fontSize: 15 }}>{s.name}</span>
+                <span className="mono dim" style={{ fontSize: 13 }}>{s.key} · {s.bpm}</span>
+              </div>
+            ))}
+          </div>
+          <button className="btn btn--primary btn--block btn--lg" style={{ marginTop: 16 }} onClick={() => { replaceSetlist(window.WIPCPlan.songs); setSongModal(null); }}>
+            <WIcon name="upload" size={18} /> Import these {window.WIPCPlan.songs.length} songs
+          </button>
+        </window.WIModal>
+      )}
+      {songModal === 'saved' && (
+        <window.WIModal title="Saved setlists" onClose={() => setSongModal(null)}>
+          <window.WISavedList onPick={(songs) => { replaceSetlist(songs); setSongModal(null); }} />
+        </window.WIModal>
+      )}
+      {songModal === 'library' && (
+        <LibraryPicker onClose={() => setSongModal(null)} onPick={(s) => addFromLibrary(s)} />
+      )}
+      {authOpen && (
+        <AuthModal intro={pendingSave.current ? 'Sign in to keep this song in your library.' : 'Sign in to save songs to your personal library.'}
+          onClose={() => { setAuthOpen(false); pendingSave.current = null; }}
+          onDone={() => { if (pendingSave.current) { doSaveToLibrary(pendingSave.current); pendingSave.current = null; } }} />
+      )}
+      {savedOk && (
+        <div style={{ position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)', zIndex: 90, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: '10px 18px', boxShadow: 'var(--shadow-card)' }}>
+          <span className="chip chip--ok" style={{ border: 0, background: 'transparent', padding: 0 }}><span className="dot" />{savedOk}</span>
+        </div>
+      )}
     </div>
   );
 }
 
 const activeBtn = { background: 'var(--surface-3)', borderColor: 'var(--border-2)', color: 'var(--fg-1)' };
-
-function TalkChip({ name, icon, active, onClick }) {
-  return (
-    <button onClick={onClick} style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 11px',
-      borderRadius: 'var(--r-pill)', fontSize: 13, fontWeight: 600, cursor: 'pointer',
-      background: active ? 'var(--accent-soft)' : 'var(--surface-2)',
-      border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border)'),
-      color: active ? 'var(--fg-1)' : 'var(--fg-2)',
-      transition: 'all 140ms var(--ease)',
-    }}>
-      <WIcon name={icon} size={13} />{name}
-    </button>
-  );
-}
 
 function Segmented({ label, value, onChange, options }) {
   return (
@@ -521,6 +679,21 @@ function TabBtn({ active, onClick, icon, label }) {
     <button className="btn btn--ghost" onClick={onClick}
       style={{ height: 38, fontSize: 14, ...(active ? { background: 'var(--surface-2)', color: 'var(--fg-1)' } : { color: 'var(--fg-3)' }) }}>
       <WIcon name={icon} size={16} /> {label}
+    </button>
+  );
+}
+
+function TalkChip({ on, icon, label, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 12px', cursor: 'pointer',
+      borderRadius: 999, fontSize: 13.5, fontWeight: on ? 600 : 500, maxWidth: 190,
+      background: on ? 'var(--accent-soft)' : 'var(--surface-2)',
+      border: '1px solid ' + (on ? 'var(--accent)' : 'var(--border)'),
+      color: on ? 'var(--fg-1)' : 'var(--fg-2)', transition: 'all 150ms var(--ease)',
+    }}>
+      <WIcon name={icon} size={15} style={{ color: on ? 'var(--accent)' : 'var(--fg-3)', flex: 'none' }} />
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
     </button>
   );
 }
@@ -575,6 +748,72 @@ function CuePanel({ cues, activeCueId, playing, onFire, onStop, onAdd, onUpdate,
     </div>
   );
 }
+
+/* ---- inline song add / edit (replaces the old setup page) ---- */
+function SongEditor({ song, onSave, onClose }) {
+  const init = song || { name: '', key: 'C', bpm: 120, bpb: 4, notes: '', clickSound: 'wood' };
+  const [f, setF] = uS(init);
+  const M = window.WIModal;
+  const KEYS = window.WIKEYS;
+  const Seg = window.WISegmented;
+  const set = (patch) => setF(v => ({ ...v, ...patch }));
+  const valid = (f.name || '').trim().length > 0;
+  const commit = () => {
+    if (!valid) return;
+    onSave({
+      name: f.name.trim(), key: f.key,
+      bpm: Math.min(300, Math.max(20, +f.bpm || 120)),
+      bpb: +f.bpb || 4, notes: (f.notes || '').trim(), clickSound: f.clickSound || 'wood',
+    });
+  };
+  return (
+    <M title={song ? 'Edit song' : 'Add song'} onClose={onClose}>
+      <div className="field" style={{ marginBottom: 14 }}>
+        <label>Song name</label>
+        <input className="input" autoFocus value={f.name} placeholder="e.g. King of kings"
+          onChange={e => set({ name: e.target.value })}
+          onKeyDown={e => { if (e.key === 'Enter') commit(); }} />
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+        <label style={seChip}>
+          <span className="overline">Key</span>
+          <select className="mono" value={f.key} onChange={e => set({ key: e.target.value })} style={seSel}>
+            {KEYS.map(k => <option key={k} value={k}>{k}</option>)}
+          </select>
+        </label>
+        <label style={seChip}>
+          <span className="overline">BPM</span>
+          <input className="mono" type="number" min="20" max="300" value={f.bpm} onChange={e => set({ bpm: e.target.value })} style={{ ...seSel, width: 62 }} />
+        </label>
+        <label style={seChip}>
+          <span className="overline">Time</span>
+          <select className="mono" value={f.bpb} onChange={e => set({ bpb: +e.target.value })} style={seSel}>
+            <option value={4}>4/4</option><option value={3}>3/4</option><option value={6}>6/8</option><option value={2}>2/4</option>
+          </select>
+        </label>
+      </div>
+      <div className="field" style={{ marginBottom: 16 }}>
+        <label>Notes <span className="dim" style={{ fontWeight: 400 }}>· optional</span></label>
+        <input className="input" value={f.notes} placeholder="e.g. starts without click, half-time feel"
+          onChange={e => set({ notes: e.target.value })}
+          onKeyDown={e => { if (e.key === 'Enter') commit(); }} />
+      </div>
+      <div style={{ marginBottom: 18 }}>
+        <Seg label="Click sound" value={f.clickSound || 'wood'} onChange={(v) => set({ clickSound: v })}
+          options={[['wood', 'Wood'], ['beep', 'Beep'], ['hihat', 'Hat'], ['cowbell', 'Bell']]} />
+      </div>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button className="btn" style={{ flex: 1 }} onClick={onClose}>Cancel</button>
+        <button className="btn btn--primary" style={{ flex: 1 }} disabled={!valid} onClick={commit}>
+          <WIcon name="check" size={18} /> {song ? 'Save changes' : 'Add to setlist'}
+        </button>
+      </div>
+    </M>
+  );
+}
+
+const seChip = { display: 'flex', alignItems: 'center', gap: 6, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: '0 8px 0 12px', height: 48 };
+const seSel = { height: 44, background: 'transparent', border: 0, color: 'var(--fg-1)', fontSize: 16, fontWeight: 700, outline: 'none', cursor: 'pointer' };
 
 window.HostControl = HostControl;
 window.WISegmented = Segmented;

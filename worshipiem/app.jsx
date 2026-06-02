@@ -1,21 +1,6 @@
 /* WorshipIEM — router + tweaks (Landing lives in landing.jsx) */
 const { useState: aS, useEffect: aE } = React;
 
-class ErrorBoundary extends React.Component {
-  constructor(p) { super(p); this.state = { err: null }; }
-  static getDerivedStateFromError(err) { return { err }; }
-  render() {
-    if (this.state.err) return (
-      <div style={{ padding: 40, color: '#f5f4ed', background: '#0d0d0c', minHeight: '100dvh', fontFamily: 'sans-serif' }}>
-        <h2 style={{ color: '#e07a55' }}>Something went wrong</h2>
-        <pre style={{ fontSize: 13, color: '#b0aea5', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{String(this.state.err)}</pre>
-        <button onClick={() => location.reload()} style={{ marginTop: 20, padding: '10px 20px', background: '#e07a55', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 15 }}>Reload</button>
-      </div>
-    );
-    return this.props.children;
-  }
-}
-
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "accent": ["#e07a55", "#c96442"],
   "clickSound": "wood"
@@ -46,6 +31,22 @@ function parseHash() {
   return { path: path || '/', params };
 }
 
+/* ---------- create-session redirect ----------
+   The old "build your setlist" page is gone. Hosting now mints a room with a
+   starter setlist and drops you straight onto the live control surface, where
+   songs are added/edited inline. */
+function CreateSession({ go }) {
+  aE(() => {
+    const room = makeRoomCode();
+    window.WISession.save(room, {
+      name: 'Sunday morning — 9:00', password: '',
+      setlist: window.WIDefaultSetlist(), createdAt: Date.now(),
+    });
+    go('#/host?room=' + room);
+  }, []);
+  return null;
+}
+
 function App() {
   const [route, setRoute] = aS(parseHash());
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
@@ -56,13 +57,11 @@ function App() {
   }, []);
   aE(() => { applyTweaks(t); }, [t.accent]);
   aE(() => { if (window.WIClick) window.WIClick.setTimbre(t.clickSound); }, [t.clickSound]);
-
-
   const go = (hash) => { if (location.hash === hash) setRoute(parseHash()); else location.hash = hash; window.scrollTo(0, 0); };
 
   const { path, params } = route;
   let screen;
-  if (path === '/create') screen = <HostSetup go={go} />;
+  if (path === '/create') screen = <CreateSession go={go} />;
   else if (path === '/host') screen = params.room ? <HostControl key={params.room} room={params.room} go={go} /> : <Landing go={go} />;
   else if (path === '/join') screen = <JoinScreen go={go} presetRoom={(params.room || '').toUpperCase()} />;
   else if (path === '/listen') screen = params.room ? <Listener key={params.room} room={(params.room || '').toUpperCase()} go={go} /> : <JoinScreen go={go} />;
@@ -85,6 +84,4 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <ErrorBoundary><App /></ErrorBoundary>
-);
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);

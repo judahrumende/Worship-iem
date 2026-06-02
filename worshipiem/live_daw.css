@@ -1,0 +1,316 @@
+/* WorshipIEM — Live DAW (fullscreen)
+   A live arrangement surface: every song in the setlist is a clip on ONE lane.
+   No instruments, no recording multitrack — just the songs, a click playhead,
+   and a voice-cue lane. Built on the WorshipIEM dark, warm palette. */
+
+.ld {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: #0a0a0b;
+  --ld-line: rgba(255,255,255,0.07);
+  --ld-line-2: rgba(255,255,255,0.12);
+  --ld-panel: #0d0d0e;
+  display: grid;
+  grid-template-rows: 54px 1fr;
+  color: var(--fg-1);
+  animation: ld-in 0.3s var(--ease);
+}
+@keyframes ld-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ld { animation: none; } }
+
+/* ---------- top bar ---------- */
+.ld-top {
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--ld-line);
+  background: transparent;
+}
+.ld-brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 14.5px; }
+.ld-brand .g {
+  width: 26px; height: 26px; border-radius: 7px; flex: none;
+  background: var(--accent); color: var(--on-accent);
+  display: grid; place-items: center;
+}
+.ld-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--fg-3);
+}
+.ld-sep { width: 1px; height: 22px; background: var(--ld-line); flex: none; }
+.ld-name { font-family: var(--font-serif); font-size: 18px; letter-spacing: -0.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
+.ld-grow { flex: 1; }
+.ld-stat { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg-3); white-space: nowrap; }
+.ld-stat b { color: var(--fg-2); font-weight: 600; }
+
+.ld-iconbtn {
+  height: 32px; min-width: 32px; padding: 0 10px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  background: transparent; border: 1px solid transparent;
+  color: var(--fg-2); font-size: 13.5px; font-weight: 500; cursor: pointer;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+}
+.ld-iconbtn:hover { background: rgba(255,255,255,0.05); color: var(--fg-1); }
+.ld-iconbtn.on { background: var(--accent-soft); color: var(--accent); }
+
+/* ---------- body split ---------- */
+.ld-body { display: grid; grid-template-columns: 1fr 348px; min-height: 0; }
+.ld-main { display: flex; flex-direction: column; min-width: 0; position: relative; }
+
+/* arrangement scroller */
+.ld-scroll {
+  flex: 1; min-height: 0;
+  overflow: auto;
+  scrollbar-color: var(--border-2) transparent;
+}
+.ld-canvas { position: relative; height: 100%; min-width: 100%; }
+
+.ld-lanelabel {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--fg-3);
+  margin: 0 0 7px 2px;
+}
+
+/* ruler */
+.ld-ruler { position: relative; height: 20px; margin-bottom: 4px; }
+.ld-ruler .bk {
+  position: absolute; top: 0; bottom: 0;
+  border-left: 1px solid var(--border);
+}
+.ld-ruler .bk.major { border-left-color: var(--border-2); }
+.ld-ruler .bk span {
+  position: absolute; top: 2px; left: 5px;
+  font-family: var(--font-mono); font-size: 10px; color: var(--fg-3);
+}
+.ld-ruler .bk.major span { color: var(--fg-2); }
+
+/* ---------- lanes (one song per line) ---------- */
+.ld-lanes { position: relative; min-width: 100%; padding-bottom: 12px; }
+
+.ld-lanes-ruler { position: relative; display: flex; border-bottom: 1px solid var(--ld-line); }
+.ld-ruler-corner { position: sticky; left: 0; z-index: 6; flex: none; display: flex; align-items: center; padding-left: 14px; border-right: 1px solid var(--ld-line); background: #0a0a0b; }
+.ld-lanes-ruler .bk { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--ld-line); }
+.ld-lanes-ruler .bk.major { border-left-color: var(--ld-line-2); }
+.ld-lanes-ruler .bk span { position: absolute; top: 6px; left: 5px; font-family: var(--font-mono); font-size: 9.5px; color: var(--fg-3); }
+.ld-lanes-ruler .bk.major span { color: var(--fg-2); }
+
+.ld-lane { position: relative; display: flex; border-top: 1px solid var(--ld-line); cursor: pointer; }
+.ld-lane:hover { background: rgba(255,255,255,0.012); }
+.ld-lane.active { background: rgba(255,255,255,0.022); }
+.ld-lane.dragover { box-shadow: inset 0 2px 0 var(--accent); }
+
+.ld-lanehead { flex: none; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-right: 1px solid var(--ld-line); background: #0a0a0b; position: sticky; left: 0; z-index: 5; cursor: grab; }
+.ld-lanehead:active { cursor: grabbing; }
+.ld-lane.active .ld-lanehead { border-left: 2px solid var(--accent); padding-left: 12px; }
+.ld-lane-name { font-family: var(--font-serif); font-size: 15px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg-1); }
+.ld-lane-meta { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.3px; color: var(--fg-3); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; }
+.ld-lanehead .key-cap {
+  width: 24px; height: 24px; flex: none; border-radius: 6px; display: grid; place-items: center;
+  font-family: var(--font-mono); font-size: 12px; font-weight: 600;
+  background: transparent; color: var(--fg-3); border: 1px solid var(--ld-line-2);
+}
+.ld-lane.active .ld-lanehead .key-cap { color: var(--accent); border-color: var(--accent); }
+.ld-lanehead .live-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 700; letter-spacing: 0.4px; padding: 2px 7px; border-radius: 999px; background: var(--accent); color: var(--on-accent); flex: none; }
+.ld-lanehead .live-tag .d { width: 5px; height: 5px; border-radius: 50%; background: var(--on-accent); animation: blink 1.4s steps(1) infinite; }
+.ld-lanehead .grab { color: var(--fg-3); display: flex; cursor: grab; opacity: 0; transition: opacity 0.15s var(--ease); flex: none; }
+.ld-lane:hover .ld-lanehead .grab { opacity: 0.7; }
+
+/* small status cards in the blank space below the lanes */
+.ld-blank { position: sticky; left: 0; display: flex; gap: 12px; flex-wrap: wrap; padding: 16px; max-width: 640px; }
+.ld-mini { background: rgba(255,255,255,0.025); border: 1px solid var(--ld-line); border-radius: 10px; padding: 11px 13px; min-width: 220px; }
+.ld-mini-h { font-family: var(--font-mono); font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--fg-3); margin-bottom: 9px; }
+.ld-mini-up { display: flex; flex-direction: column; gap: 3px; }
+.ld-mini-up .nm { font-family: var(--font-serif); font-size: 16px; color: var(--fg-1); }
+.ld-mini-up .mt { font-family: var(--font-mono); font-size: 11px; color: var(--fg-3); }
+.ld-mini-up .end { font-size: 13px; color: var(--fg-3); }
+.ld-mini-empty { font-size: 12.5px; color: var(--fg-3); }
+.ld-mini-band { display: flex; flex-direction: column; gap: 6px; }
+.ld-band-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.ld-band-row .nm { color: var(--fg-1); font-weight: 500; }
+.ld-band-row .inst { color: var(--fg-3); font-size: 11.5px; margin-left: auto; }
+.ld-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.ld-dot.ok { background: var(--success); box-shadow: 0 0 6px rgba(122,168,96,0.6); }
+.ld-dot.wait { background: var(--danger); }
+
+.ld-lanearea { position: relative; flex: none; background-image: repeating-linear-gradient(90deg, var(--ld-line) 0, var(--ld-line) 1px, transparent 1px, transparent 56px); }
+
+.ld-clip {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  border-radius: 0; overflow: hidden; user-select: none; cursor: grab;
+  border-left: 1px solid rgba(0,0,0,0.28); border-right: 1px solid rgba(0,0,0,0.28);
+  transition: box-shadow 0.22s var(--ease), filter 0.22s var(--ease);
+}
+.ld-clip:active { cursor: grabbing; }
+.ld-lane:hover .ld-clip { filter: brightness(1.06); }
+.ld-clip:not(.active) { opacity: 0.92; }
+.ld-clip.dragging { opacity: 0.4; }
+.ld-clip.active { box-shadow: inset 0 0 0 2px var(--accent); z-index: 2; }
+.ld-clip .grid {
+  position: absolute; inset: 0;
+  background-image:
+    repeating-linear-gradient(90deg, rgba(0,0,0,0.22) 0, rgba(0,0,0,0.22) 1px, transparent 1px, transparent var(--bar4, 56px)),
+    repeating-linear-gradient(90deg, rgba(0,0,0,0.10) 0, rgba(0,0,0,0.10) 1px, transparent 1px, transparent var(--bar, 14px));
+  pointer-events: none;
+}
+.ld-clip .notes { position: absolute; left: 0; right: 0; top: 12px; bottom: 12px; pointer-events: none; }
+.ld-mnote { position: absolute; height: 5px; border-radius: 3px; }
+.ld-wave { position: absolute; left: 10px; right: 10px; top: 24px; bottom: 12px; width: auto; height: auto; pointer-events: none; }
+.ld-clip-tag { position: absolute; left: 12px; top: 9px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; font-weight: 700; pointer-events: none; }
+.ld-clip .resize { position: absolute; top: 0; right: 0; bottom: 0; width: 12px; cursor: ew-resize; }
+.ld-clip .resize::after { content: ''; position: absolute; top: 50%; right: 3px; width: 3px; height: 26px; transform: translateY(-50%); border-radius: 2px; background: rgba(0,0,0,0.3); opacity: 0; transition: opacity 0.15s var(--ease); }
+.ld-clip:hover .resize::after { opacity: 1; }
+/* infinite-loop clip: fade the right edge to imply it keeps going */
+.ld-clip--inf::after {
+  content: ''; position: absolute; top: 0; bottom: 0; right: 0; width: 64px;
+  background: linear-gradient(90deg, transparent, rgba(0,0,0,0.32));
+  pointer-events: none;
+}
+.ld-inf {
+  background: transparent; border: 0; outline: none; cursor: pointer;
+  color: var(--fg-1); font-family: var(--font-mono); font-size: 18px; font-weight: 700;
+  padding: 0 6px; border-radius: 5px; line-height: 1; transition: background 0.15s var(--ease);
+}
+.ld-inf:hover { background: rgba(255,255,255,0.06); }
+
+/* type-in tempo field in the click-options panel */
+.ld-tempo-field { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--ld-line); border-radius: 10px; }
+.ld-tempo-lbl { font-size: 13px; color: var(--fg-2); }
+.ld-tempo-field .ld-num { font-family: var(--font-mono); font-size: 22px; font-weight: 700; color: var(--fg-1); }
+.ld-tempo-unit { font-family: var(--font-mono); font-size: 11px; color: var(--fg-3); }
+.ld-tempo-step { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 8px; background: rgba(255,255,255,0.04); border: 1px solid var(--ld-line); color: var(--fg-1); cursor: pointer; transition: background 0.15s var(--ease); }
+.ld-tempo-step:hover { background: rgba(255,255,255,0.08); }
+
+/* voice-cue marker on a song's line */
+.ld-cue {
+  position: absolute; top: 12px; height: 28px;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 8px 0 7px; border-radius: 8px;
+  background: linear-gradient(180deg, #5a4a7e, #463a64);
+  border: 1px solid rgba(255,255,255,0.16);
+  color: #efeaf7; font-size: 12px; font-weight: 600;
+  cursor: pointer; white-space: nowrap; z-index: 4;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+}
+.ld-cue .play { display: grid; place-items: center; opacity: 0.9; }
+.ld-cue .x { opacity: 0; transition: opacity 0.15s var(--ease); display: grid; place-items: center; }
+.ld-cue:hover .x { opacity: 0.85; }
+
+/* playhead spans all lanes */
+.ld-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--fg-1); box-shadow: 0 0 12px rgba(245,244,237,0.7); pointer-events: none; z-index: 6; }
+.ld-playhead::before { content: ''; position: absolute; top: -1px; left: 50%; transform: translateX(-50%); width: 11px; height: 11px; border-radius: 50%; background: var(--fg-1); box-shadow: 0 0 10px rgba(245,244,237,0.7); }
+.ld-playhead.cued { background: var(--accent); box-shadow: 0 0 12px var(--accent-glow); }
+.ld-playhead.cued::before { background: var(--accent); }
+
+/* ---------- right side panel ---------- */
+.ld-side {
+  border-left: 1px solid var(--ld-line);
+  background: #0a0a0b;
+  overflow-y: auto; padding: 20px;
+  display: flex; flex-direction: column; gap: 18px;
+}
+.ld-np-art {
+  height: 120px; flex: none; border-radius: 14px; position: relative; overflow: hidden;
+  display: flex; align-items: flex-end; padding: 14px;
+}
+.ld-np-art .ph {
+  position: absolute; inset: 0;
+  background-image: repeating-linear-gradient(90deg, rgba(0,0,0,0.18) 0 2px, transparent 2px 9px);
+  opacity: 0.4;
+}
+.ld-np-art .lbl { position: relative; font-family: var(--font-mono); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: rgba(0,0,0,0.55); font-weight: 700; }
+.ld-np-title { font-family: var(--font-serif); font-size: 26px; line-height: 1.12; letter-spacing: -0.3px; }
+.ld-np-meta { display: flex; gap: 8px; flex-wrap: wrap; }
+.ld-note { font-size: 14px; line-height: 1.55; color: var(--fg-2); }
+
+.ld-block { border-top: 1px solid var(--ld-line); padding-top: 16px; display: flex; flex-direction: column; gap: 12px; }
+.ld-block-h { font-family: var(--font-mono); font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--fg-3); display: flex; align-items: center; gap: 7px; }
+
+.ld-cuelist { display: flex; flex-direction: column; gap: 8px; }
+.ld-cuerow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: 10px;
+  background: rgba(255,255,255,0.03); border: 1px solid var(--ld-line);
+}
+.ld-cuerow .nm { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ld-cuerow .sub { font-family: var(--font-mono); font-size: 11px; color: var(--fg-3); }
+
+.ld-rec-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--live); animation: blink 1s steps(1) infinite; }
+
+/* ---------- bottom dock (cue bar + transport) ---------- */
+.ld-dock { border-top: 1px solid var(--ld-line); background: #0a0a0b; }
+
+.ld-cuebar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; border-bottom: 1px solid var(--ld-line);
+  overflow-x: auto;
+}
+.ld-cuebar-h {
+  display: inline-flex; align-items: center; gap: 7px; flex: none;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 1.2px;
+  text-transform: uppercase; color: var(--fg-2);
+}
+.ld-cuechips { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; overflow-x: auto; }
+.ld-cuechip {
+  display: inline-flex; align-items: center; gap: 8px; flex: none;
+  height: 34px; padding: 0 6px 0 8px; border-radius: 9px;
+  background: linear-gradient(180deg, #5a4a7e, #463a64);
+  border: 1px solid rgba(255,255,255,0.14); color: #efeaf7;
+  font-size: 12.5px; font-weight: 600;
+}
+.ld-cuechip .nm { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ld-cuechip .bar { font-family: var(--font-mono); font-size: 11px; opacity: 0.7; }
+.ld-cuechip .play, .ld-cuechip .x { display: grid; place-items: center; background: rgba(0,0,0,0.18); border: 0; color: inherit; width: 24px; height: 24px; border-radius: 6px; cursor: pointer; }
+.ld-cuechip .x:hover { background: rgba(0,0,0,0.32); }
+
+.ld-transbar { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 16px; flex-wrap: wrap; }
+.ld-tbtn {
+  height: 42px; min-width: 42px; padding: 0 13px; border-radius: 10px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--ld-line);
+  color: var(--fg-1); font-size: 13.5px; font-weight: 500; cursor: pointer;
+  transition: border-color var(--dur-hover) var(--ease), background var(--dur-hover) var(--ease);
+}
+.ld-tbtn:hover { border-color: var(--ld-line-2); background: rgba(255,255,255,0.07); }
+.ld-tbtn:disabled, .ld-tbtn.off { opacity: 0.4; cursor: not-allowed; }
+.ld-tbtn.rec { background: var(--live); border-color: var(--live); color: #fff; }
+.ld-tbtn--play { background: var(--accent); border-color: var(--accent); color: var(--on-accent); min-width: 112px; }
+.ld-tbtn--play:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+.ld-tbtn--play.stop { background: var(--live); border-color: var(--live); color: #fff; }
+.ld-bpm { display: flex; align-items: center; gap: 4px; padding: 0 6px; }
+.ld-bpm .v { font-family: var(--font-mono); font-size: 17px; font-weight: 700; min-width: 40px; text-align: center; }
+.ld-bpm .u { font-family: var(--font-mono); font-size: 10px; color: var(--fg-3); }
+.ld-tsep { width: 1px; height: 26px; background: var(--ld-line); margin: 0 2px; }
+.ld-ptt {
+  height: 50px; min-width: 168px; padding: 0 20px; border-radius: 11px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  background: var(--surface-3); border: 1px solid var(--ld-line-2);
+  color: var(--fg-1); font-size: 15px; font-weight: 600; cursor: pointer;
+  user-select: none; touch-action: none;
+  transition: background 0.12s var(--ease), box-shadow 0.12s var(--ease), border-color 0.12s var(--ease);
+}
+.ld-ptt:hover { border-color: var(--fg-3); }
+.ld-ptt.on { background: var(--live); border-color: var(--live); color: #fff; box-shadow: 0 0 0 4px rgba(216,87,76,0.28); }
+.ld-mic-ind { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--success); white-space: nowrap; }
+.ld-mic-ind .d { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 6px rgba(122,168,96,0.6); }
+.ld-pos { font-family: var(--font-mono); font-size: 14px; color: var(--fg-2); padding: 0 8px; white-space: nowrap; display: inline-flex; align-items: center; gap: 2px; }
+.ld-num {
+  -webkit-appearance: none; appearance: none;
+  background: transparent; border: 0; outline: none; padding: 1px 2px;
+  color: var(--fg-1); text-align: center; border-radius: 5px; cursor: text;
+  transition: background 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+.ld-num:hover { background: rgba(255,255,255,0.06); }
+.ld-num:focus { background: rgba(255,255,255,0.09); box-shadow: inset 0 0 0 1px var(--accent); }
+.ld-bpm .ld-num { font-family: var(--font-mono); font-size: 17px; font-weight: 700; }
+.ld-pos .ld-num { font-family: var(--font-mono); font-size: 14px; color: var(--fg-1); font-weight: 600; }
+.ld-hint { font-size: 12px; color: var(--fg-3); padding: 0 6px; white-space: nowrap; }
+
+.ld-empty {
+  position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+}
+.ld-empty .inner { max-width: 360px; }
+
+@media (max-width: 960px) {
+  .ld-body { grid-template-columns: 1fr; }
+  .ld-side { display: none; }
+}
