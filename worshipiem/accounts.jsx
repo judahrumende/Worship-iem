@@ -22,12 +22,14 @@ function AuthModal({ onClose, onDone, intro }) {
   const [u, setU] = React.useState('');
   const [p, setP] = React.useState('');
   const [err, setErr] = React.useState('');
-  const submit = () => {
-    setErr('');
+  const [busy, setBusy] = React.useState(false);
+  const submit = async () => {
+    if (busy) return;
+    setErr(''); setBusy(true);
     try {
-      const name = mode === 'login' ? window.WIAuth.login(u, p) : window.WIAuth.signup(u, p);
+      const name = mode === 'login' ? await window.WIAuth.login(u, p) : await window.WIAuth.signup(u, p);
       onDone && onDone(name); onClose();
-    } catch (e) { setErr(e.message || 'Something went wrong.'); }
+    } catch (e) { setErr(e.message || 'Something went wrong.'); setBusy(false); }
   };
   return (
     <M title={mode === 'login' ? 'Sign in' : 'Create an account'} onClose={onClose}>
@@ -44,12 +46,12 @@ function AuthModal({ onClose, onDone, intro }) {
       </div>
       <div className="field" style={{ marginBottom: 16 }}>
         <label>Password</label>
-        <input className="input" type="password" value={p} placeholder={mode === 'signup' ? 'At least 4 characters' : 'Your password'}
+        <input className="input" type="password" value={p} placeholder={mode === 'signup' ? 'At least 6 characters' : 'Your password'}
           onChange={e => setP(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') submit(); }} />
       </div>
       {err && <p style={{ color: 'var(--danger)', fontSize: 13.5, margin: '0 0 14px' }}>{err}</p>}
-      <button className="btn btn--primary btn--block btn--lg" onClick={submit}>
-        {mode === 'login' ? 'Sign in' : 'Create account'}
+      <button className="btn btn--primary btn--block btn--lg" onClick={submit} disabled={busy}>
+        {busy ? 'Just a moment…' : (mode === 'login' ? 'Sign in' : 'Create account')}
       </button>
       <p className="dim" style={{ fontSize: 12.5, textAlign: 'center', margin: '14px 0 0' }}>
         No email needed — just a username and password. Your saved songs live under your account on this device.
