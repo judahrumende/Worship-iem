@@ -25,6 +25,8 @@
       this._pcs = new Map();     // listenerId → RTCPeerConnection
       this._transport = null;
       this._registeredTransport = null;
+      this._live = true;         // is the mic currently "on air" (open mic, or PTT held)
+      this._targets = [];        // [] = whole band; else only these listener ids hear audio
     }
 
     get active() { return !!this.stream; }
@@ -105,6 +107,8 @@
         if (e.candidate && this._transport)
           this._transport.send('rtc-ice', { to: id, candidate: e.candidate.toJSON() });
       };
+      // Honour current on-air + targeting state for this new peer immediately.
+      this._applyRouting(id, pc);
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -117,9 +121,30 @@
       if (pc) { pc.close(); this._pcs.delete(id); }
     }
 
-    setPttEnabled(enabled) {
-      if (this.stream) this.stream.getAudioTracks().forEach(t => { t.enabled = !!enabled; });
+    /* Per-listener audio isolation. A listener hears audio only when the mic is
+       on-air AND (no targets set, or it is one of the targets). We gate at the
+       RTCRtpSender via replaceTrack — track.enabled is shared across every peer,
+       so it can't isolate; replaceTrack(null) genuinely sends silence to one
+       peer while others keep the live track. */
+    _applyRouting(id, pc) {
+      const track = this.stream && this.stream.getAudioTracks()[0];
+      const wants = this._live && (this._targets.length === 0 || this._targets.includes(id));
+      const sender = pc.getSenders().find(s => !s.track || (s.track && s.track.kind === 'audio'));
+      if (!sender) return;
+      const desired = wants ? (track || null) : null;
+      if (sender.track === desired) return;
+      try { sender.replaceTrack(desired); } catch (_) {}
     }
+
+    /* live = mic on-air (open mic, or PTT held); targets = [] for whole band */
+    setRouting(live, targets) {
+      this._live = !!live;
+      this._targets = Array.isArray(targets) ? targets : [];
+      this._pcs.forEach((pc, id) => this._applyRouting(id, pc));
+    }
+
+    /* kept for back-compat — global on-air toggle with no targeting */
+    setPttEnabled(enabled) { this.setRouting(enabled, this._targets); }
   }
 
   window.WIMic = new MicEngine();

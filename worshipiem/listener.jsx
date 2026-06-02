@@ -108,8 +108,9 @@ function Listener({ room, go }) {
     const t = new window.WITransport(room, 'listener');
     tx.current = t;
 
-    // Sync our myId to the transport's actual assigned id (critical for Firebase routing)
-    t.on('registered', (p) => { if (p && p.id) myId.current = p.id; });
+    // Sync our myId to the transport's actual assigned id (critical for Firebase routing),
+    // then re-announce so the host keys our presence + WebRTC peer to the real id.
+    t.on('registered', (p) => { if (p && p.id) { myId.current = p.id; sendHello(); } });
 
     t.on('state', (s) => { setSt(s); lastState.current = Date.now(); setConnected(true); });
     t.on('level', (p) => {

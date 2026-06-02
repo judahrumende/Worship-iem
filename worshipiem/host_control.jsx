@@ -126,8 +126,9 @@ function HostControl({ room, go }) {
   /* persist setlist edits to localStorage so nothing resets on reload */
   uE(() => { window.WISession.save(room, { ...session, setlist }); }, [setlist]);
 
-  /* PTT gate — enable/disable mic tracks */
-  uE(() => { if (window.WIMic.active) window.WIMic.setPttEnabled(pttMode !== 'ptt' || holding); }, [pttMode, holding, micOn]);
+  /* PTT gate + per-listener targeting — route real audio, not just the meter.
+     On-air when open-mic, or when push-to-talk is being held. talkTargets [] = whole band. */
+  uE(() => { if (window.WIMic.active) window.WIMic.setRouting(pttMode !== 'ptt' || holding, talkTargets); }, [pttMode, holding, micOn, talkTargets]);
 
   /* drop talkback targets for musicians who have left */
   uE(() => { setTalkTargets(t => { const f = t.filter(id => players[id]); return f.length === t.length ? t : f; }); }, [players]);
